@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eVisitor Übernachtungen</title>
+<style>
+  :root{--bg:#f4f6f9;--card:#fff;--ink:#1c2430;--muted:#6b7685;
+        --accent:#2563eb;--accent2:#1d4ed8;--line:#e3e8ef;--total:#eef4ff;}
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0f141b;--card:#1a212b;--ink:#e8edf3;--muted:#95a1b0;
+          --accent:#3b82f6;--accent2:#60a5fa;--line:#2a333f;--total:#1e2836;}}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",
+        Roboto,sans-serif;background:var(--bg);color:var(--ink);
+        padding:16px;-webkit-text-size-adjust:100%;}
+  .wrap{max-width:820px;margin:0 auto}
+  h1{font-size:22px;margin:.2em 0}
+  .sub{color:var(--muted);margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+         padding:18px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .kpis{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  .kpi{flex:1;min-width:150px;background:var(--total);border-radius:12px;
+        padding:14px 16px}
+  .kpi .n{font-size:30px;font-weight:700;color:var(--accent2)}
+  .kpi .l{color:var(--muted);font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:15px}
+  th,td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:13px;text-transform:uppercase;
+      letter-spacing:.03em}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  td.big{font-weight:700;font-size:17px;color:var(--accent2)}
+  tr.total td{background:var(--total);font-weight:700;border-top:2px solid var(--accent)}
+  tr.err td{color:#c0392b}
+  .barrow{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .barlabel{width:74px;font-size:13px;color:var(--muted);flex:none;text-align:right}
+  .bartrack{flex:1;background:var(--total);border-radius:8px;overflow:hidden;height:26px}
+  .bar{background:linear-gradient(90deg,var(--accent),var(--accent2));height:100%;
+        min-width:2px;border-radius:8px;display:flex;align-items:center;
+        justify-content:flex-end;transition:width .3s}
+  .bar span{color:#fff;font-size:12px;font-weight:600;padding:0 8px}
+  .muted{color:var(--muted)}
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:8px}
+</style></head><body><div class="wrap">
+  <h1>eVisitor – Übernachtungen (noćenja)</h1>
+  <div class="sub">Zeitraum 2025-01-01 bis 2025-12-31</div>
+
+  <div class="card">
+    <div class="kpis">
+      <div class="kpi"><div class="n">56</div><div class="l">Übernachtungen gesamt</div></div>
+      <div class="kpi"><div class="n">0</div><div class="l">davon offen (nicht abgemeldet)</div></div>
+      <div class="kpi"><div class="n">6</div><div class="l">Gäste gesamt</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:17px;margin:.1em 0 .6em">Pro Account</h2>
+    <table><thead><tr><th>Account</th><th style="text-align:right">Übernachtungen</th>
+      <th style="text-align:right">davon offen</th><th style="text-align:right">Gäste</th></tr></thead>
+      <tbody><tr><td>apartments-sunset</td><td class='num big'>35</td><td class='num'>0</td><td class='num'>3</td></tr><tr><td>villa-mare</td><td class='num big'>21</td><td class='num'>0</td><td class='num'>3</td></tr><tr class='err'><td>studio-adria</td><td colspan='3'>Fehler: Login fehlgeschlagen (Benutzername/Passwort falsch).</td></tr><tr class='total'><td>GESAMT</td><td class='num big'>56</td><td class='num'>0</td><td class='num'>6</td></tr></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size:17px;margin:.1em 0 .6em">Übernachtungen pro Monat</h2>
+    <div class='barrow'><div class='barlabel'>Mai 2025</div><div class='bartrack'><div class='bar' style='width:36%'><span>5</span></div></div></div><div class='barrow'><div class='barlabel'>Jun 2025</div><div class='bartrack'><div class='bar' style='width:100%'><span>14</span></div></div></div><div class='barrow'><div class='barlabel'>Jul 2025</div><div class='bartrack'><div class='bar' style='width:100%'><span>14</span></div></div></div><div class='barrow'><div class='barlabel'>Aug 2025</div><div class='bartrack'><div class='bar' style='width:100%'><span>14</span></div></div></div><div class='barrow'><div class='barlabel'>Sep 2025</div><div class='bartrack'><div class='bar' style='width:64%'><span>9</span></div></div></div>
+  </div>
+
+  <footer>Erstellt am 10.07.2025 12:34 · lokal auf dem iPad berechnet · Passwörter wurden nicht gespeichert</footer>
+</div></body></html>
