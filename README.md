@@ -30,11 +30,47 @@ Ein Aufruf aus einer `file://`-HTML-Datei scheitert **zwingend**:
 Deshalb ist die Lösung ein Python-Skript, das die gewünschte HTML-Ausgabe
 **erzeugt** – du bekommst die schöne Safari-Ansicht, nur ohne die CORS-Sackgasse.
 
-> Alternativen, die auch gingen: HTML-Oberfläche + winziger lokaler Proxy in
-> a-Shell (`http://localhost:8080`, same-origin → kein CORS) oder Pythonista
-> (kostenpflichtig). Sag Bescheid, wenn du lieber die Proxy-Variante möchtest.
+> Alternativen, die auch gehen: Pythonista (kostenpflichtig). Die **HTML-
+> Oberfläche mit lokalem Proxy** ist als zweite Variante enthalten – siehe unten.
 
 ---
+
+## Zwei Varianten
+
+| Datei | Bedienung | Vorteil |
+|---|---|---|
+| **`evisitor_proxy.py`** | HTML-Oberfläche in Safari (`http://localhost:8080`) | Schönste Bedienung – Formular, Buttons, Live-Ergebnis. **Empfohlen.** |
+| **`evisitor_nocenja.py`** | Reines Terminal-Skript, erzeugt `evisitor_report.html` | Läuft ohne dauerhaft laufenden Server; robust, falls iOS a-Shell pausiert. |
+
+Beide nutzen dieselbe (getestete) Übernachtungs-Berechnung und dieselbe Konfiguration.
+
+---
+
+## Variante A – HTML-Oberfläche mit lokalem Proxy (empfohlen)
+
+`evisitor_proxy.py` startet einen kleinen Webserver **nur auf dem iPad**. Safari
+lädt die Seite von `http://localhost:8080` und ruft dieselbe Adresse für die
+Daten (`/api/run`) auf → **same-origin, kein CORS**. Die eigentlichen Aufrufe an
+evisitor.hr macht Python (kennt kein CORS) mit nativem Cookie-Handling.
+
+```
+python3 evisitor_proxy.py            # Server starten
+```
+Dann **in Safari öffnen: `http://localhost:8080`**. Accounts + Zeitraum eingeben,
+„Übernachtungen abfragen" tippen. Server beenden mit **Strg-C** in a-Shell.
+
+Optionen: `--port 8090` (anderer Port) · `--test` (Test-API) · `--insecure`.
+
+- Passwörter laufen **nur über localhost** und werden nie gespeichert.
+- Benutzernamen werden – falls „merken" aktiviert – nur im Browser (localStorage,
+  ohne Passwörter) gemerkt.
+- Hinweis: Lässt iOS a-Shell im Hintergrund pausieren, hält Safari a-Shell in der
+  Regel aktiv, solange die Seite offen ist. Notfalls a-Shell kurz in den
+  Vordergrund holen und die Abfrage erneut starten.
+
+---
+
+## Variante B – Terminal-Skript (`evisitor_nocenja.py`)
 
 ## So bringst du es aufs iPad (rein auf dem iPad, gratis)
 
@@ -96,7 +132,9 @@ Ablauf:
 
 Der Endpunkt, der die einzelnen Gäste-Anmeldungen mit An-/Abreise liefert, steht
 nur in der **login-geschützten** offiziellen Web-API-Wiki. Ich konnte ihn nicht
-öffentlich auslesen. Im Skript sind oben Platzhalter gesetzt:
+öffentlich auslesen. In **beiden** Dateien (`evisitor_proxy.py` **und**
+`evisitor_nocenja.py`) steht oben derselbe Konfigurationsblock mit Platzhaltern –
+passe ihn in der Datei an, die du nutzt:
 
 ```python
 REPORT_PATH     = "/Rest/Htz/EvidencijaGostiju"   # <-- ggf. anpassen
