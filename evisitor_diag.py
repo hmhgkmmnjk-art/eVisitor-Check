@@ -23,7 +23,6 @@ Die Ausgabe bitte kopieren und mir schicken.
 
 import sys
 import json
-import getpass
 import datetime as dt
 import urllib.request
 import urllib.error
@@ -125,14 +124,31 @@ def get(opener, base, path):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(line_buffering=True)   # Ausgabe sofort anzeigen
+    except Exception:
+        pass
     print("=" * 60)
     print(" eVisitor Diagnose – NUR LESEN (ändert nichts)")
     print("=" * 60)
-    user = input("Benutzername: ").strip()
-    pw = getpass.getpass("Passwort (unsichtbar): ")
+
+    # Zugangsdaten am liebsten als Argumente (keine unsichtbare Eingabe):
+    #   python3 evisitor_diag.py BENUTZERNAME PASSWORT
+    if len(sys.argv) >= 3:
+        user = sys.argv[1].strip()
+        pw = sys.argv[2]
+        print("Benutzername: %s (aus Aufruf übernommen)" % user)
+    else:
+        print("Tipp: Du kannst auch so starten:  python3 evisitor_diag.py BENUTZER PASSWORT")
+        print("(Die folgende Eingabe ist SICHTBAR, damit du siehst, dass sie ankommt.)\n")
+        user = input("Benutzername: ").strip()
+        pw = input("Passwort (sichtbar): ").strip()
+
     if not user or not pw:
         print("Abbruch: Benutzername und Passwort nötig.")
         return
+    print("\n→ Eingaben erhalten. Starte jetzt den Login-Test ...")
+    sys.stdout.flush()
 
     today = dt.date.today()
     df = dt.date(today.year, 1, 1).isoformat()
