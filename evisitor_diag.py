@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-eVisitor Diagnose (NUR LESEN – read-only)  v7  – richtige Produktions-Adresse
-=============================================================================
+eVisitor Diagnose (NUR LESEN)  v10 – gezielt Ressource 'Tourist' lesen
+======================================================================
 
-Aus der offiziellen Doku:
-  * Produktions-API-ROOT: https://www.evisitor.hr/eVisitorRhetos_API
-  * Login: .../Resources/AspNetFormsAuth/Authentication/Login
-           Body {"userName":..,"password":..}  (apikey NUR auf Testplattform!)
-           -> Antwort "true"/"false", bei Erfolg Auth-Cookies
-  * Abfragen: .../Rest/Htz/<Resource>/?page=1&psize=..&filters=[..]&sort=..
-              Ergebnis {Records:[...]}
-
-Diese Diagnose loggt sich in die PRODUKTION ein (ohne apikey) und sucht die
-Ressource mit den Gäste-/Aufenthaltsdaten (Check-in/Check-out).
+Aus der Wiki: die Gäste-Anmeldung erzeugt einen 'Tourist'-Datensatz mit
+Feldern StayFrom (Anreise), ForeseenStayUntil, CheckOutDate (Abreise),
+CheckedOutTourist (bool), TouristCancelled (bool), Facility, TouristName,
+TouristSurname. 'Tourist' braucht beim GET einen Filter -> hier werden
+mehrere Filtervarianten probiert, um echte Daten + das Datumsformat zu sehen.
 
 SICHERHEIT: nur GET (Lesen) plus Login-POST. Schreiben ist blockiert.
 
-Nutzung:
+Nutzung (feste Commit-Adresse, cache-sicher):
     cd Documents
-    curl -L -o evisitor_diag.py "https://raw.githubusercontent.com/hmhgkmmnjk-art/eVisitor-Check/claude/evisitor-overnight-stays-74xv0o/evisitor_diag.py?cb=7"
+    curl -L -o evisitor_diag.py "https://raw.githubusercontent.com/hmhgkmmnjk-art/eVisitor-Check/PLATZHALTER_SHA/evisitor_diag.py"
     python3 evisitor_diag.py 57344933760 Jure2234
 """
 
@@ -33,30 +28,8 @@ import urllib.error
 import urllib.parse
 import http.cookiejar
 
+BASE = "https://www.evisitor.hr/eVisitorRhetos_API"
 LOGIN_PATH = "/Resources/AspNetFormsAuth/Authentication/Login"
-
-BASES = [
-    "https://www.evisitor.hr/eVisitorRhetos_API",   # PRODUKTION (kein apikey)
-    "https://www.evisitor.hr/testApi",              # Test (braucht apikey)
-]
-
-# Kandidaten für lesbare Ressourcen (nur GET). Zuerst eigene Objekte des
-# Vermieters (zur Bestätigung der Autorisierung), dann Gäste/Aufenthalte.
-GUEST_RESOURCES = [
-    # Objekte / Vermieter (sollten für den Obveznik lesbar sein):
-    "FacilityBrowse", "Facility", "TTPayerUnion", "TTPayer",
-    # Gäste / Check-in / Aufenthalte:
-    "TouristCheckIn", "TouristCheckInBrowse", "CheckedInTourist",
-    "CheckedInTouristBrowse", "ActiveTourist", "ActiveTouristBrowse",
-    "Tourist", "TouristBrowse", "TouristStay", "TouristStayBrowse",
-    "TouristReport", "TouristReportBrowse", "TouristCheckInReport",
-    "TouristCheckInReportBrowse", "CheckInBrowse", "GuestBook", "GuestBookBrowse",
-    "TouristTraffic", "TouristTrafficBrowse", "EvidencijaTurista",
-    "PopisTurista", "Boravak",
-    # Übernachtungsberechnung (nur lesen; keine Aktion auslösen):
-    "TTCalculationItemSourceByTourist", "TTCalculationItemSourceByFacility",
-]
-
 FORBIDDEN_GET = ("save", "import", "create", "update", "delete", "insert")
 TIMEOUT = 25
 
@@ -89,38 +62,30 @@ def new_session():
     cj = http.cookiejar.CookieJar()
     https = urllib.request.HTTPSHandler(context=make_ssl_context())
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), https)
-    op.addheaders = [("User-Agent", "eVisitor-Diag/7 (read-only)"),
+    op.addheaders = [("User-Agent", "eVisitor-Diag/10 (read-only)"),
                      ("Accept", "application/json, text/plain, */*")]
     return op, cj
 
 
-def do_login(base, user, pw, apikey):
-    url = base + LOGIN_PATH
+def login(op, user, pw):
+    url = BASE + LOGIN_PATH
     assert_read_only("POST", url)
-    payload = {"userName": user, "password": pw, "PersistCookie": False}
-    if apikey:
-        payload["apikey"] = apikey
-    op, cj = new_session()
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST")
+    body = json.dumps({"userName": user, "password": pw, "PersistCookie": False}).encode()
+    req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    try:
-        with op.open(req, timeout=TIMEOUT) as r:
-            return r.status, r.read(300).decode("utf-8", "replace").strip(), op, cj
-    except urllib.error.HTTPError as e:
-        return e.code, e.read(300).decode("utf-8", "replace").strip(), op, cj
-    except Exception as e:
-        return None, str(e)[:140], None, None
+    with op.open(req, timeout=TIMEOUT) as r:
+        return r.read(50).decode("utf-8", "replace").strip()
 
 
-def get(op, base, path):
-    url = base + path
+def get(op, path):
+    url = BASE + path
     assert_read_only("GET", url)
     req = urllib.request.Request(url, method="GET")
     try:
         with op.open(req, timeout=TIMEOUT) as r:
             return r.status, r.read(500000).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return e.code, e.read(600).decode("utf-8", "replace")
+        return e.code, e.read(700).decode("utf-8", "replace")
     except Exception as e:
         return None, str(e)
 
@@ -128,7 +93,7 @@ def get(op, base, path):
 def records_of(raw):
     try:
         data = json.loads(raw)
-    except ValueError:
+    except (ValueError, TypeError):
         return None
     if isinstance(data, dict):
         for k in ("Records", "records", "value", "Value"):
@@ -139,135 +104,107 @@ def records_of(raw):
     return None
 
 
+def net_date(d):
+    ms = int(dt.datetime(d.year, d.month, d.day).timestamp() * 1000)
+    return "/Date(%d+0100)/" % ms
+
+
+def fenc(conds):
+    return urllib.parse.quote(json.dumps(conds))
+
+
+def try_variant(op, resource, label, query):
+    code, raw = get(op, "/Rest/Htz/%s/%s" % (resource, query))
+    if code == 200:
+        recs = records_of(raw)
+        if recs is None:
+            print("  200 ?  %-26s (kein Records-Format) %s" % (label, raw[:80]))
+            return None
+        fields = sorted(recs[0].keys()) if recs else []
+        print("  200 ✅ %-26s -> %d Datensatz/Datensätze, %d Felder"
+              % (label, len(recs), len(fields)))
+        if fields:
+            print("        Felder: %s" % ", ".join(fields))
+            print("        Beispiel: %s" % json.dumps(recs[0], ensure_ascii=False)[:600])
+        return (label, fields, recs)
+    else:
+        print("  %-4s   %-26s %s" % (code, label, (raw or "").strip()[:220]))
+        return None
+
+
 def main():
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
     print("=" * 68)
-    print(" eVisitor Diagnose v9 – volle Fehler + Filter (NUR LESEN)")
+    print(" eVisitor Diagnose v10 – Ressource 'Tourist' lesen (NUR LESEN)")
     print("=" * 68)
-    print("TLS: %s" % ssl.OPENSSL_VERSION)
+    print("TLS: %s | Basis: %s" % (ssl.OPENSSL_VERSION, BASE))
 
     a = sys.argv[1:]
     if len(a) >= 2:
         user, pw = a[0].strip(), a[1]
-        apikey = a[2].strip() if len(a) >= 3 else ""
     else:
         user = input("Benutzername: ").strip()
         pw = input("Passwort (sichtbar): ").strip()
-        apikey = ""
     if not user or not pw:
         print("Abbruch: Zugangsdaten nötig.")
         return
-    print("Benutzername: %s   apikey: %s" % (user, "ja" if apikey else "nein (Produktion)"))
 
-    # 1) Login (Produktion zuerst, ohne apikey)
-    print("\n--- 1) Login ---")
-    session = None
-    for base in BASES:
-        tag = base.split("/")[-1]
-        use_key = apikey if "test" in tag.lower() else ""
-        code, resp, op, cj = do_login(base, user, pw, use_key)
-        if code is None:
-            print("  %-18s Fehler: %s" % (tag, resp))
-            continue
-        cookies = [c.name for c in (cj or [])]
-        success = (code == 200 and resp.lower() == "true")
-        print("  %-18s HTTP %s Body=%-6s Cookies=%s %s"
-              % (tag, code, resp[:6] or "-", ",".join(cookies) or "-", "✅" if success else ""))
-        if not success and resp and resp.lower() != "false":
-            print("       Antwort: %s" % resp[:180])
-        if success and session is None:
-            session = (base, op)
-
-    if not session:
-        print("\nKein Login mit 'true'.")
-        print("Wenn Produktion 'false': Passwort prüfen. Ausgabe bitte schicken.")
+    op, cj = new_session()
+    try:
+        ans = login(op, user, pw)
+    except Exception as e:
+        print("Login-Fehler: %s" % e)
+        return
+    print("\nLogin-Antwort: %s  %s" % (ans, "✅" if ans.lower() == "true" else "❌"))
+    if ans.lower() != "true":
+        print("Login nicht erfolgreich – bitte Passwort prüfen.")
         return
 
-    base, op = session
-    print("\n✅ Angemeldet an: %s" % base)
+    year = dt.date.today().year
+    jan1 = dt.date(year, 1, 1)
 
-    # Kurzliste vielversprechender Ressourcen für den 2. Versuch (mit Filter):
-    shortlist = ["Tourist", "FacilityBrowse", "TTPayerUnion", "TouristCheckIn",
-                 "CheckedInTourist"]
+    # --- FacilityBrowse: eigene Objekte (liefert u. a. den Objekt-Code) ---
+    print("\n--- A) Eigene Objekte (FacilityBrowse) ---")
+    try_variant(op, "FacilityBrowse", "filters=[]", "?filters=%s&page=1&psize=5" % fenc([]))
 
-    # 2) Ressourcen probieren:
-    #    200      = lesbar (Treffer, Felder anzeigen)
-    #    400/401  = Ressource existiert, aber nicht berechtigt
-    #    404      = Ressource gibt es nicht (unter diesem Namen)
-    print("\n--- 2) Lesbare Ressourcen suchen ---")
-    print("  (200 = lesbar ✅ | 'not authorized' = existiert, keine Berechtigung | 404 = kein solcher Name)")
-    hits = []
-    for name in GUEST_RESOURCES:
-        code, raw = get(op, base, "/Rest/Htz/%s/?page=1&psize=1" % name)
-        low = (raw or "").lower()
-        if code == 200:
-            recs = records_of(raw)
-            if recs is None:
-                print("  200 ?  %-30s (unerwartetes Format: %s)" % (name, (raw or "")[:60]))
-                continue
-            fields = sorted(recs[0].keys()) if recs else []
-            date_fields = [f for f in fields if re.search(
-                r'date|datum|dolask|odlask|checkin|checkout|arriv|depart', f, re.I)]
-            print("  200 ✅ %-30s Felder=%d %s" % (
-                name, len(fields),
-                ("| Datum: " + ", ".join(date_fields)) if date_fields else
-                ("(0 Datensätze auf Seite 1)" if not fields else "")))
-            if fields:
-                print("        Felder: %s" % ", ".join(fields))
-            hits.append((name, fields, date_fields, recs))
-        elif "not authorized" in low or code in (401, 403):
-            print("  🔒     %-30s existiert, aber keine Leseberechtigung" % name)
-        elif code == 404:
-            pass  # gibt's nicht – still
-        else:
-            # 400 o. Ä.: VOLLE Meldung zeigen (verrät oft den Pflicht-Parameter)
-            print("  %-4s   %-30s" % (code, name))
-            print("        %s" % (raw or "").strip()[:400])
+    # --- Tourist: verschiedene Filter, um lesbare Daten zu bekommen ---
+    print("\n--- B) Ressource 'Tourist' – Filtervarianten (%d) ---" % year)
+    variants = [
+        ("nur paging", "?page=1&psize=2"),
+        ("filters=[]", "?filters=%s&page=1&psize=2" % fenc([])),
+        ("TouristCancelled=false",
+         "?filters=%s&page=1&psize=2" % fenc([{"Property": "TouristCancelled", "Operation": "equal", "Value": "false"}])),
+        ("CheckedOutTourist=false",
+         "?filters=%s&page=1&psize=2" % fenc([{"Property": "CheckedOutTourist", "Operation": "equal", "Value": "false"}])),
+        ("StayFrom>=ISO %s" % jan1,
+         "?filters=%s&page=1&psize=2" % fenc([{"Property": "StayFrom", "Operation": "greaterequal", "Value": jan1.isoformat()}])),
+        ("StayFrom>=NETDate",
+         "?filters=%s&page=1&psize=2" % fenc([{"Property": "StayFrom", "Operation": "greaterequal", "Value": net_date(jan1)}])),
+    ]
+    got = None
+    for label, q in variants:
+        res = try_variant(op, "Tourist", label, q)
+        if res and res[1] and got is None:
+            got = res
 
-    # 3) Zweiter Versuch: mit leerem Filter bzw. RecordsAndTotalCount
-    print("\n--- 3) Zweiter Versuch (mit filters=[] / RecordsAndTotalCount) ---")
-    for name in shortlist:
-        for label, suffix in (
-            ("filters=[]", "/?filters=%5B%5D&page=1&psize=1"),
-            ("RecordsAndTotalCount", "/RecordsAndTotalCount?page=1&psize=1"),
-        ):
-            code, raw = get(op, base, "/Rest/Htz/%s%s" % (name, suffix))
-            if code == 200:
-                recs = records_of(raw)
-                fields = sorted(recs[0].keys()) if recs else []
-                date_fields = [f for f in fields if re.search(
-                    r'date|datum|dolask|odlask|checkin|checkout|arriv|depart', f, re.I)]
-                print("  200 ✅ %-22s (%s) Felder=%d %s" % (
-                    name, label, len(fields),
-                    ("| Datum: " + ", ".join(date_fields)) if date_fields else
-                    ("(0 Datensätze)" if not fields else "")))
-                if fields:
-                    print("        Felder: %s" % ", ".join(fields))
-                    hits.append((name, fields, date_fields, recs))
-            elif code not in (404, None):
-                print("  %-4s   %-22s (%s) %s" % (code, name, label, (raw or "").strip()[:180]))
+    # Zähl-Variante (TotalCount) für das ganze Jahr, falls Tourist lesbar ist
+    if got:
+        print("\n--- C) Zählung (RecordsAndTotalCount, StayFrom>=%s) ---" % jan1)
+        code, raw = get(op, "/Rest/Htz/Tourist/RecordsAndTotalCount?filters=%s&page=1&psize=1"
+                        % fenc([{"Property": "StayFrom", "Operation": "greaterequal", "Value": jan1.isoformat()}]))
+        print("  HTTP %s  %s" % (code, (raw or "")[:200]))
 
     print("\n--- Zusammenfassung ---")
-    if hits:
-        withdate = [h for h in hits if h[2]]
-        print("Lesbare Ressourcen: %s" % ", ".join(h[0] for h in hits))
-        if withdate:
-            best = withdate[0]
-            print("Mit Check-in/Check-out-Feldern: %s" % ", ".join(h[0] for h in withdate))
-            print("\n--- Beispiel-Datensatz von %s ---" % best[0])
-            if best[3]:
-                print(json.dumps(best[3][0], ensure_ascii=False, indent=1)[:1800])
-        else:
-            print("Noch keine mit Datumsfeldern gefunden – evtl. 0 Gäste im Jahr oder")
-            print("anderer Ressourcenname. Bitte Wiki-Abschnitt 'Resursi' ansehen.")
+    if got:
+        print("✅ 'Tourist' ist lesbar mit: %s" % got[0])
+        print("   Felder: %s" % ", ".join(got[1]))
+        print("Damit kann ich die App fertigstellen. Bitte komplette Ausgabe schicken.")
     else:
-        print("Keine der geratenen Ressourcen war lesbar.")
-        print("Bitte in der Wiki (direkt nach deinem Zitat) unter 'Resursi' die Liste")
-        print("ansehen und mir Namen + 'Atributi' der Tourist-/CheckIn-Ressource nennen.")
-    print("\nBitte komplette Ausgabe schicken.")
+        print("Kein Tourist-Filter lieferte Daten. Bitte die vollständigen 400-Meldungen")
+        print("oben schicken – sie sagen, welcher Filter/Parameter verlangt wird.")
 
 
 if __name__ == "__main__":
