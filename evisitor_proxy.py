@@ -40,9 +40,11 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # KONFIGURATION  (identisch zu evisitor_nocenja.py)
 # ---------------------------------------------------------------------------
-API_ROOT_PROD = "https://www.evisitor.hr/eVisitorApi"
-API_ROOT_TEST = "https://www.evisitor.hr/testApi"
+API_ROOT_PROD = "https://www.evisitor.hr/eVisitorRhetos_API"   # Produktion (kein apikey)
+API_ROOT_TEST = "https://www.evisitor.hr/testApi"             # Test (braucht apikey)
 LOGIN_PATH = "/Resources/AspNetFormsAuth/Authentication/Login"
+# API-Schlüssel nur für die Testplattform nötig; Produktion braucht keinen.
+API_KEY = ""
 
 # WICHTIG – ggf. anpassen (siehe README / --discover in evisitor_nocenja.py):
 REPORT_PATH = "/Rest/Htz/EvidencijaGostiju"       # <-- ggf. anpassen
@@ -234,10 +236,12 @@ def make_opener():
 
 
 def api_login(opener, username, password):
-    # Rhetos/AspNetFormsAuth erwartet exakt diese Feldnamen (Großschreibung!)
-    # und antwortet mit HTTP 200 + Body "true" (Erfolg) bzw. "false" (abgelehnt).
-    body = json.dumps({"UserName": username, "Password": password,
-                       "PersistCookie": False}).encode("utf-8")
+    # Rhetos/AspNetFormsAuth: Felder klein (userName/password), Antwort
+    # HTTP 200 + Body "true"/"false". apikey nur auf der Testplattform.
+    payload = {"userName": username, "password": password, "PersistCookie": False}
+    if API_KEY:
+        payload["apikey"] = API_KEY
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(API_ROOT + LOGIN_PATH, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
@@ -260,8 +264,8 @@ def extract_records(payload):
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        for key in ("value", "Value", "data", "Data", "items", "Items",
-                    "result", "Result", "rows", "Rows", "d"):
+        for key in ("Records", "records", "value", "Value", "data", "Data",
+                    "items", "Items", "result", "Result", "rows", "Rows", "d"):
             if isinstance(payload.get(key), list):
                 return payload[key]
         d = payload.get("d")

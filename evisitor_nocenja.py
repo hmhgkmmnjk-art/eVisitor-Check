@@ -47,11 +47,13 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 # API-Wurzel. Produktion ist der Standard; die Test-Umgebung ("--test")
 # ist offiziell dokumentiert (Daten-Snapshot der Produktion, eigene Zugänge).
-API_ROOT_PROD = "https://www.evisitor.hr/eVisitorApi"
-API_ROOT_TEST = "https://www.evisitor.hr/testApi"
+API_ROOT_PROD = "https://www.evisitor.hr/eVisitorRhetos_API"   # Produktion (kein apikey)
+API_ROOT_TEST = "https://www.evisitor.hr/testApi"             # Test (braucht apikey)
 
 # Login-Pfad (ASP.NET Forms Auth – laut offizieller Web-API-Doku).
 LOGIN_PATH = "/Resources/AspNetFormsAuth/Authentication/Login"
+# API-Schlüssel nur für die Testplattform nötig; Produktion braucht keinen.
+API_KEY = ""
 
 # ---------------------------------------------------------------------------
 # WICHTIG – DIESEN EINEN WERT MUSST DU EVTL. ANPASSEN:
@@ -329,11 +331,10 @@ def api_login(opener, root, username, password):
     Rhetos/AspNetFormsAuth erwartet exakt diese Feldnamen (Großschreibung!)
     und antwortet mit HTTP 200 + Body "true"/"false"."""
     url = root + LOGIN_PATH
-    body = json.dumps({
-        "UserName": username,
-        "Password": password,
-        "PersistCookie": False,
-    }).encode("utf-8")
+    payload = {"userName": username, "password": password, "PersistCookie": False}
+    if API_KEY:
+        payload["apikey"] = API_KEY
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
@@ -376,8 +377,8 @@ def extract_records(payload):
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        for key in ("value", "Value", "data", "Data", "items", "Items",
-                    "result", "Result", "rows", "Rows", "d"):
+        for key in ("Records", "records", "value", "Value", "data", "Data",
+                    "items", "Items", "result", "Result", "rows", "Rows", "d"):
             if key in payload and isinstance(payload[key], list):
                 return payload[key]
         # Manche APIs verschachteln unter "d": {"results": [...]}
