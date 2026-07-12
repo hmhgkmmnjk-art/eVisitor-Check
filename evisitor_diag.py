@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-eVisitor Diagnose (NUR LESEN)  v10 – gezielt Ressource 'Tourist' lesen
-======================================================================
+eVisitor Diagnose (NUR LESEN)  v11 – Tourist mit sort=ID lesen
+==============================================================
 
-Aus der Wiki: die Gäste-Anmeldung erzeugt einen 'Tourist'-Datensatz mit
-Feldern StayFrom (Anreise), ForeseenStayUntil, CheckOutDate (Abreise),
-CheckedOutTourist (bool), TouristCancelled (bool), Facility, TouristName,
-TouristSurname. 'Tourist' braucht beim GET einen Filter -> hier werden
-mehrere Filtervarianten probiert, um echte Daten + das Datumsformat zu sehen.
+Fehler aus v10 verraten:
+  * "Sort order must be set if paging is used"  -> sort-Parameter nötig
+  * "Type 'Common.Queryable.Htz_Tourist' does not have property ..."
+     -> die lesbare Tourist-Tabelle hat andere Feldnamen als die Aktion
+Lösung: mit ?sort=ID&page=1&psize=.. lesen (kein geratener Filter),
+dann die ECHTEN Feldnamen aus einem Datensatz ablesen.
 
 SICHERHEIT: nur GET (Lesen) plus Login-POST. Schreiben ist blockiert.
 
-Nutzung (feste Commit-Adresse, cache-sicher):
+Nutzung:
     cd Documents
-    curl -L -o evisitor_diag.py "https://raw.githubusercontent.com/hmhgkmmnjk-art/eVisitor-Check/PLATZHALTER_SHA/evisitor_diag.py"
+    curl -L -o evisitor_diag.py "https://raw.githubusercontent.com/hmhgkmmnjk-art/eVisitor-Check/PLATZHALTER/evisitor_diag.py"
     python3 evisitor_diag.py 57344933760 Jure2234
 """
 
@@ -62,7 +63,7 @@ def new_session():
     cj = http.cookiejar.CookieJar()
     https = urllib.request.HTTPSHandler(context=make_ssl_context())
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), https)
-    op.addheaders = [("User-Agent", "eVisitor-Diag/10 (read-only)"),
+    op.addheaders = [("User-Agent", "eVisitor-Diag/11 (read-only)"),
                      ("Accept", "application/json, text/plain, */*")]
     return op, cj
 
@@ -83,9 +84,9 @@ def get(op, path):
     req = urllib.request.Request(url, method="GET")
     try:
         with op.open(req, timeout=TIMEOUT) as r:
-            return r.status, r.read(500000).decode("utf-8", "replace")
+            return r.status, r.read(800000).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return e.code, e.read(700).decode("utf-8", "replace")
+        return e.code, e.read(900).decode("utf-8", "replace")
     except Exception as e:
         return None, str(e)
 
@@ -104,32 +105,39 @@ def records_of(raw):
     return None
 
 
-def net_date(d):
-    ms = int(dt.datetime(d.year, d.month, d.day).timestamp() * 1000)
-    return "/Date(%d+0100)/" % ms
+def total_of(raw):
+    try:
+        data = json.loads(raw)
+        for k in ("TotalCount", "totalCount", "Count", "count"):
+            if isinstance(data.get(k), int):
+                return data[k]
+    except Exception:
+        pass
+    return None
 
 
 def fenc(conds):
     return urllib.parse.quote(json.dumps(conds))
 
 
-def try_variant(op, resource, label, query):
-    code, raw = get(op, "/Rest/Htz/%s/%s" % (resource, query))
+def show(op, title, path):
+    print("\n%s" % title)
+    print("  GET %s" % path)
+    code, raw = get(op, path)
     if code == 200:
         recs = records_of(raw)
         if recs is None:
-            print("  200 ?  %-26s (kein Records-Format) %s" % (label, raw[:80]))
+            print("  200 (kein Records-Format): %s" % raw[:200])
             return None
-        fields = sorted(recs[0].keys()) if recs else []
-        print("  200 ✅ %-26s -> %d Datensatz/Datensätze, %d Felder"
-              % (label, len(recs), len(fields)))
-        if fields:
-            print("        Felder: %s" % ", ".join(fields))
-            print("        Beispiel: %s" % json.dumps(recs[0], ensure_ascii=False)[:600])
-        return (label, fields, recs)
-    else:
-        print("  %-4s   %-26s %s" % (code, label, (raw or "").strip()[:220]))
-        return None
+        print("  200 ✅  %d Datensatz/Datensätze" % len(recs))
+        if recs:
+            fields = sorted(recs[0].keys())
+            print("  Felder (%d): %s" % (len(fields), ", ".join(fields)))
+            print("  Beispiel-Datensatz:")
+            print("    " + json.dumps(recs[0], ensure_ascii=False, indent=1).replace("\n", "\n    ")[:1600])
+        return recs
+    print("  %s: %s" % (code, (raw or "").strip()[:500]))
+    return None
 
 
 def main():
@@ -138,9 +146,9 @@ def main():
     except Exception:
         pass
     print("=" * 68)
-    print(" eVisitor Diagnose v10 – Ressource 'Tourist' lesen (NUR LESEN)")
+    print(" eVisitor Diagnose v11 – Tourist mit sort=ID (NUR LESEN)")
     print("=" * 68)
-    print("TLS: %s | Basis: %s" % (ssl.OPENSSL_VERSION, BASE))
+    print("TLS: %s" % ssl.OPENSSL_VERSION)
 
     a = sys.argv[1:]
     if len(a) >= 2:
@@ -158,53 +166,61 @@ def main():
     except Exception as e:
         print("Login-Fehler: %s" % e)
         return
-    print("\nLogin-Antwort: %s  %s" % (ans, "✅" if ans.lower() == "true" else "❌"))
+    print("Login: %s %s" % (ans, "✅" if ans.lower() == "true" else "❌"))
     if ans.lower() != "true":
-        print("Login nicht erfolgreich – bitte Passwort prüfen.")
         return
 
+    # A) Eigene Objekte
+    show(op, "--- A) FacilityBrowse (eigene Objekte) ---",
+         "/Rest/Htz/FacilityBrowse/?sort=ID&page=1&psize=5")
+
+    # B) Tourist-Datensätze (echte Feldnamen!)
+    recs = show(op, "--- B) Tourist (sort=ID) – echte Felder ---",
+                "/Rest/Htz/Tourist/?sort=ID&page=1&psize=3")
+
+    if not recs:
+        print("\nKonnte keinen Tourist-Datensatz lesen. Volle Meldung oben schicken.")
+        return
+
+    fields = list(recs[0].keys())
+    # Datumsfelder automatisch erkennen (Wert /Date(..)/ oder Name deutet auf Datum)
+    date_fields = []
+    for f in fields:
+        v = recs[0].get(f)
+        if isinstance(v, str) and v.startswith("/Date("):
+            date_fields.append(f)
+        elif re.search(r'stay|arriv|depart|checkin|checkout|datum|date|from|until', f, re.I):
+            if f not in date_fields:
+                date_fields.append(f)
+    print("\n--- C) Erkannte Datums-/Aufenthaltsfelder ---")
+    print("  %s" % (", ".join(date_fields) or "(keine eindeutig erkannt)"))
+
+    # D) Jahres-Zählung über das erkannte Anreisefeld (mehrere Wertformate testen)
     year = dt.date.today().year
     jan1 = dt.date(year, 1, 1)
+    arrival = None
+    for cand in ("StayFrom", "CheckInDate", "ArrivalDate", "DateFrom", "StayDateFrom"):
+        if cand in fields:
+            arrival = cand
+            break
+    if not arrival and date_fields:
+        arrival = date_fields[0]
 
-    # --- FacilityBrowse: eigene Objekte (liefert u. a. den Objekt-Code) ---
-    print("\n--- A) Eigene Objekte (FacilityBrowse) ---")
-    try_variant(op, "FacilityBrowse", "filters=[]", "?filters=%s&page=1&psize=5" % fenc([]))
-
-    # --- Tourist: verschiedene Filter, um lesbare Daten zu bekommen ---
-    print("\n--- B) Ressource 'Tourist' – Filtervarianten (%d) ---" % year)
-    variants = [
-        ("nur paging", "?page=1&psize=2"),
-        ("filters=[]", "?filters=%s&page=1&psize=2" % fenc([])),
-        ("TouristCancelled=false",
-         "?filters=%s&page=1&psize=2" % fenc([{"Property": "TouristCancelled", "Operation": "equal", "Value": "false"}])),
-        ("CheckedOutTourist=false",
-         "?filters=%s&page=1&psize=2" % fenc([{"Property": "CheckedOutTourist", "Operation": "equal", "Value": "false"}])),
-        ("StayFrom>=ISO %s" % jan1,
-         "?filters=%s&page=1&psize=2" % fenc([{"Property": "StayFrom", "Operation": "greaterequal", "Value": jan1.isoformat()}])),
-        ("StayFrom>=NETDate",
-         "?filters=%s&page=1&psize=2" % fenc([{"Property": "StayFrom", "Operation": "greaterequal", "Value": net_date(jan1)}])),
-    ]
-    got = None
-    for label, q in variants:
-        res = try_variant(op, "Tourist", label, q)
-        if res and res[1] and got is None:
-            got = res
-
-    # Zähl-Variante (TotalCount) für das ganze Jahr, falls Tourist lesbar ist
-    if got:
-        print("\n--- C) Zählung (RecordsAndTotalCount, StayFrom>=%s) ---" % jan1)
-        code, raw = get(op, "/Rest/Htz/Tourist/RecordsAndTotalCount?filters=%s&page=1&psize=1"
-                        % fenc([{"Property": "StayFrom", "Operation": "greaterequal", "Value": jan1.isoformat()}]))
-        print("  HTTP %s  %s" % (code, (raw or "")[:200]))
+    if arrival:
+        print("\n--- D) Zählung %d über Feld '%s' (RecordsAndTotalCount) ---" % (year, arrival))
+        for label, val in (("ISO", jan1.isoformat()),
+                           ("ISO+Zeit", jan1.isoformat() + "T00:00:00")):
+            q = "/Rest/Htz/Tourist/RecordsAndTotalCount?sort=ID&page=1&psize=1&filters=%s" % fenc(
+                [{"Property": arrival, "Operation": "greaterequal", "Value": val}])
+            code, raw = get(op, q)
+            tc = total_of(raw)
+            print("  Filter %-8s -> HTTP %s  TotalCount=%s  %s"
+                  % (label, code, tc, "" if code == 200 else (raw or "")[:160]))
 
     print("\n--- Zusammenfassung ---")
-    if got:
-        print("✅ 'Tourist' ist lesbar mit: %s" % got[0])
-        print("   Felder: %s" % ", ".join(got[1]))
-        print("Damit kann ich die App fertigstellen. Bitte komplette Ausgabe schicken.")
-    else:
-        print("Kein Tourist-Filter lieferte Daten. Bitte die vollständigen 400-Meldungen")
-        print("oben schicken – sie sagen, welcher Filter/Parameter verlangt wird.")
+    print("Echte Tourist-Felder: %s" % ", ".join(fields))
+    print("Bitte KOMPLETTE Ausgabe schicken – v. a. Abschnitt B (Beispiel-Datensatz)")
+    print("und D (welches Filterformat TotalCount liefert). Damit ist die App fertig.")
 
 
 if __name__ == "__main__":
