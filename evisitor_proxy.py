@@ -363,17 +363,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
-            self._send(400, json.dumps({"error": "Ungültige Anfrage."}))
+            self._send(400, json.dumps({"error": "Ungültige Anfrage.", "code": "bad_request"}))
             return
 
         date_from = parse_date(payload.get("date_from"))
         date_to = parse_date(payload.get("date_to"))
         accounts = payload.get("accounts") or []
         if not date_from or not date_to:
-            self._send(400, json.dumps({"error": "Zeitraum fehlt oder ungültig."}))
+            self._send(400, json.dumps({"error": "Zeitraum fehlt oder ungültig.",
+                                        "code": "period_missing"}))
             return
         if date_to < date_from:
-            self._send(400, json.dumps({"error": "Bis-Datum liegt vor Von-Datum."}))
+            self._send(400, json.dumps({"error": "Bis-Datum liegt vor Von-Datum.",
+                                        "code": "period_order"}))
             return
 
         today = dt.date.today()
@@ -390,14 +392,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except RuntimeError as e:
                 entry["ok"] = False
                 entry["error"] = str(e).replace("\n", " ")
+                entry["code"] = err_code(entry["error"])
             except Exception as e:
                 entry["ok"] = False
                 entry["error"] = "Unerwarteter Fehler: %s" % e
+                entry["code"] = "generic"
             results.append(entry)
 
         if not results:
             self._send(400, json.dumps(
-                {"error": "Kein Account mit Benutzername UND Passwort angegeben."}))
+                {"error": "Kein Account mit Benutzername UND Passwort angegeben.",
+                 "code": "no_account"}))
             return
 
         self._send(200, json.dumps({
@@ -405,6 +410,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "date_to": date_to.isoformat(),
             "results": results,
         }, ensure_ascii=False))
+
+
+def err_code(msg):
+    """Ordnet einer deutschen Fehlermeldung einen Sprach-Code zu (für DE/HR)."""
+    m = (msg or "").lower()
+    if "login fehlgeschlagen" in m:
+        return "login_failed"
+    if "keine verbindung zum server" in m:
+        return "no_connection"
+    if "login-server" in m:
+        return "login_http"
+    if "report-aufruf http" in m:
+        return "report_http"
+    if "keine verbindung beim report" in m:
+        return "report_conn"
+    if "kein json" in m:
+        return "report_json"
+    if "sicherheit" in m:
+        return "security"
+    return "generic"
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -486,61 +511,74 @@ HTML_PAGE = r"""<!doctype html>
   .gtable td,.gtable th{padding:9px 8px}
   .tagopen{display:inline-block;background:rgba(37,99,235,.15);color:var(--accent2);
            border-radius:6px;padding:1px 7px;font-size:12px;font-weight:600}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:4px}
+  .lang{display:flex;gap:4px;flex:none}
+  .lang button{padding:7px 11px;border-radius:9px;border:1px solid var(--line);
+    background:var(--bg);color:var(--ink);font-size:13px;font-weight:700;min-width:40px}
+  .lang button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 </style></head><body><div class="wrap">
-  <h1>eVisitor – Übernachtungen (noćenja)</h1>
-  <div class="sub">Läuft lokal auf dem iPad · Passwörter werden nicht gespeichert</div>
+  <div class="hdr">
+    <div>
+      <h1 data-i18n="title">eVisitor</h1>
+      <div class="sub" data-i18n="sub"></div>
+    </div>
+    <div class="lang">
+      <button id="langDe" class="active">DE</button>
+      <button id="langHr">HR</button>
+    </div>
+  </div>
 
   <div id="err" class="msg error hidden"></div>
 
   <div class="card">
-    <h2>Accounts</h2>
+    <h2 data-i18n="accounts"></h2>
     <div id="accounts"></div>
-    <label class="chk"><input type="checkbox" id="remember"> Benutzernamen merken (nur Namen, keine Passwörter)</label>
+    <label class="chk"><input type="checkbox" id="remember"> <span data-i18n="remember"></span></label>
   </div>
 
   <div class="card">
-    <h2>Zeitraum</h2>
+    <h2 data-i18n="period"></h2>
     <div class="seg" id="seg">
-      <button data-mode="year" class="active">Laufendes Jahr</button>
-      <button data-mode="pastyear">Anderes Jahr</button>
-      <button data-mode="range">Von–Bis</button>
+      <button data-mode="year" class="active" data-i18n="curYear"></button>
+      <button data-mode="pastyear" data-i18n="otherYear"></button>
+      <button data-mode="range" data-i18n="range"></button>
     </div>
     <div id="pastyearBox" class="hidden">
-      <label>Jahr</label>
+      <label data-i18n="year"></label>
       <select id="yearSel"></select>
     </div>
     <div id="rangeBox" class="hidden">
       <div class="acc">
-        <div><label>Von</label><input type="date" id="dFrom"></div>
-        <div><label>Bis</label><input type="date" id="dTo"></div>
+        <div><label data-i18n="from"></label><input type="date" id="dFrom"></div>
+        <div><label data-i18n="to"></label><input type="date" id="dTo"></div>
       </div>
     </div>
     <div class="note" id="periodInfo"></div>
   </div>
 
-  <button class="go" id="go">Übernachtungen abfragen</button>
+  <button class="go" id="go" data-i18n="go"></button>
 
   <div id="results" class="hidden">
     <div class="card">
-      <h2>Ergebnis <span id="periodLabel" style="font-weight:400;color:var(--muted)"></span></h2>
+      <h2><span data-i18n="result"></span> <span id="periodLabel" style="font-weight:400;color:var(--muted)"></span></h2>
       <div class="kpis">
-        <div class="kpi"><div class="n" id="kNights">0</div><div class="l">Übernachtungen gesamt</div></div>
-        <div class="kpi"><div class="n" id="kOpen">0</div><div class="l">davon offen (nicht abgemeldet)</div></div>
-        <div class="kpi"><div class="n" id="kGuests">0</div><div class="l">Gäste gesamt</div></div>
+        <div class="kpi"><div class="n" id="kNights">0</div><div class="l" data-i18n="kpiNights"></div></div>
+        <div class="kpi"><div class="n" id="kOpen">0</div><div class="l" data-i18n="kpiOpen"></div></div>
+        <div class="kpi"><div class="n" id="kGuests">0</div><div class="l" data-i18n="kpiGuests"></div></div>
       </div>
     </div>
     <div class="card">
-      <h2>Pro Account</h2>
-      <table><thead><tr><th>Account</th><th style="text-align:right">Übernacht.</th>
-        <th style="text-align:right">davon offen</th><th style="text-align:right">Gäste</th></tr></thead>
+      <h2 data-i18n="perAccount"></h2>
+      <table><thead><tr><th data-i18n="thAccount"></th><th style="text-align:right" data-i18n="thNights"></th>
+        <th style="text-align:right" data-i18n="thOpen"></th><th style="text-align:right" data-i18n="thGuests"></th></tr></thead>
         <tbody id="accRows"></tbody></table>
     </div>
     <div class="card">
-      <h2>Übernachtungen pro Monat</h2>
+      <h2 data-i18n="perMonth"></h2>
       <div id="bars"></div>
     </div>
     <div class="card">
-      <h2>Angemeldete Gäste im Zeitraum</h2>
+      <h2 data-i18n="guestsInPeriod"></h2>
       <div id="guests"></div>
     </div>
     <footer id="footer"></footer>
@@ -548,26 +586,93 @@ HTML_PAGE = r"""<!doctype html>
 </div>
 <script>
 "use strict";
-var MONTHS=["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"];
-var LS_KEY="evisitor_usernames";
-var mode="year";
+
+// --- Übersetzungen ---
+var I18N={
+ de:{title:"eVisitor – Übernachtungen (noćenja)",
+     sub:"Läuft lokal auf dem iPad · Passwörter werden nicht gespeichert",
+     accounts:"Accounts", account:"Account", user:"Benutzername", pass:"Passwort",
+     remember:"Benutzernamen merken (nur Namen, keine Passwörter)",
+     period:"Zeitraum", curYear:"Laufendes Jahr", otherYear:"Anderes Jahr", range:"Von–Bis",
+     year:"Jahr", from:"Von", to:"Bis", go:"Übernachtungen abfragen",
+     loading:"Abfrage läuft …", result:"Ergebnis",
+     kpiNights:"Übernachtungen gesamt", kpiOpen:"davon offen (nicht abgemeldet)", kpiGuests:"Gäste gesamt",
+     perAccount:"Pro Account", thAccount:"Account", thNights:"Übernacht.", thOpen:"davon offen", thGuests:"Gäste",
+     total:"GESAMT", perMonth:"Übernachtungen pro Monat", guestsInPeriod:"Angemeldete Gäste im Zeitraum",
+     thGuest:"Gast", thArrival:"Anreise", thDeparture:"Abreise", thNightsShort:"Nächte",
+     open:"offen", guestsWord:"Gäste", nightsWord:"Nächte",
+     noGuests:"Keine Gäste im Zeitraum.", noGuestData:"Keine Gästedaten.",
+     noMonthData:"Keine Monatsdaten im Zeitraum.",
+     query:"Abfrage:", between:"bis", pickPeriod:"Bitte Von- und Bis-Datum wählen.",
+     footerTxt:"lokal auf dem iPad berechnet", errWord:"Fehler",
+     v_account:"Bitte für mindestens einen Account Benutzername UND Passwort eingeben.",
+     v_period:"Bitte einen gültigen Zeitraum wählen.",
+     v_order:"Das Bis-Datum liegt vor dem Von-Datum.",
+     e_conn:"Keine Verbindung zum lokalen Server. Läuft evisitor_proxy.py noch in a-Shell?",
+     e_query:"Fehler bei der Abfrage.",
+     err_login_failed:"Login fehlgeschlagen (Benutzername/Passwort falsch).",
+     err_no_connection:"Keine Verbindung zum Server.",
+     err_login_http:"Login-Server-Fehler.", err_report_http:"Fehler beim Datenabruf.",
+     err_report_conn:"Keine Verbindung beim Datenabruf.", err_report_json:"Ungültige Server-Antwort.",
+     err_security:"Sicherheitssperre ausgelöst.", err_bad_request:"Ungültige Anfrage.",
+     err_period_missing:"Zeitraum fehlt oder ungültig.", err_period_order:"Bis-Datum liegt vor Von-Datum.",
+     err_no_account:"Kein Account mit Benutzername UND Passwort angegeben.", err_generic:"Fehler."},
+ hr:{title:"eVisitor – Noćenja",
+     sub:"Radi lokalno na iPadu · lozinke se ne spremaju",
+     accounts:"Računi", account:"Račun", user:"Korisničko ime", pass:"Lozinka",
+     remember:"Zapamti korisnička imena (samo imena, ne lozinke)",
+     period:"Razdoblje", curYear:"Tekuća godina", otherYear:"Druga godina", range:"Od–Do",
+     year:"Godina", from:"Od", to:"Do", go:"Dohvati noćenja",
+     loading:"Dohvaćanje …", result:"Rezultat",
+     kpiNights:"Ukupno noćenja", kpiOpen:"od toga otvoreno (bez odjave)", kpiGuests:"Ukupno gostiju",
+     perAccount:"Po računu", thAccount:"Račun", thNights:"Noćenja", thOpen:"otvoreno", thGuests:"Gosti",
+     total:"UKUPNO", perMonth:"Noćenja po mjesecu", guestsInPeriod:"Prijavljeni gosti u razdoblju",
+     thGuest:"Gost", thArrival:"Dolazak", thDeparture:"Odlazak", thNightsShort:"Noći",
+     open:"otvoreno", guestsWord:"gostiju", nightsWord:"noći",
+     noGuests:"Nema gostiju u razdoblju.", noGuestData:"Nema podataka o gostima.",
+     noMonthData:"Nema mjesečnih podataka u razdoblju.",
+     query:"Upit:", between:"do", pickPeriod:"Odaberite datum Od i Do.",
+     footerTxt:"izračunato lokalno na iPadu", errWord:"Greška",
+     v_account:"Unesite korisničko ime I lozinku za barem jedan račun.",
+     v_period:"Odaberite ispravno razdoblje.",
+     v_order:"Datum Do je prije datuma Od.",
+     e_conn:"Nema veze s lokalnim poslužiteljem. Radi li evisitor_proxy.py još u a-Shellu?",
+     e_query:"Greška pri dohvaćanju.",
+     err_login_failed:"Prijava nije uspjela (pogrešno korisničko ime/lozinka).",
+     err_no_connection:"Nema veze s poslužiteljem.",
+     err_login_http:"Greška poslužitelja pri prijavi.", err_report_http:"Greška pri dohvaćanju podataka.",
+     err_report_conn:"Nema veze pri dohvaćanju podataka.", err_report_json:"Neispravan odgovor poslužitelja.",
+     err_security:"Sigurnosna blokada aktivirana.", err_bad_request:"Neispravan zahtjev.",
+     err_period_missing:"Razdoblje nedostaje ili nije ispravno.", err_period_order:"Datum Do je prije datuma Od.",
+     err_no_account:"Nije unesen račun s korisničkim imenom I lozinkom.", err_generic:"Greška."}
+};
+var MONTHS={de:["Jan","Feb","Mär","Apr","Mai","Jun","Jul","Aug","Sep","Okt","Nov","Dez"],
+            hr:["Sij","Velj","Ožu","Tra","Svi","Lip","Srp","Kol","Ruj","Lis","Stu","Pro"]};
+
+var LS_KEY="evisitor_usernames", LS_LANG="evisitor_lang";
+var mode="year", LAST=null;
+var lang="de";
+try{lang=localStorage.getItem(LS_LANG)||"de";}catch(e){}
+if(lang!=="hr") lang="de";
 
 function el(id){return document.getElementById(id);}
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function todayISO(){return new Date().toISOString().slice(0,10);}
 function pad(n){return (n<10?"0":"")+n;}
+function t(k){return (I18N[lang]&&I18N[lang][k])||I18N.de[k]||k;}
+function tr(k){return (I18N[lang]&&I18N[lang][k])||I18N.de[k]||null;} // null falls unbekannt
 
-// --- Account-Felder aufbauen ---
+// --- Account-Felder aufbauen (Werte bleiben bei Sprachwechsel erhalten) ---
 (function buildAccounts(){
   var saved=[];
   try{saved=JSON.parse(localStorage.getItem(LS_KEY)||"[]");}catch(e){}
   var box=el("accounts"),html="";
   for(var i=0;i<3;i++){
     var u=saved[i]?esc(saved[i]):"";
-    html+='<div class="acc"><div class="tag">Account '+(i+1)+'</div>'+
-      '<div><label>Benutzername</label><input type="text" autocomplete="off" '+
+    html+='<div class="acc"><div class="tag" data-acctag></div>'+
+      '<div><label data-i18n="user"></label><input type="text" autocomplete="off" '+
       'autocapitalize="none" spellcheck="false" id="u'+i+'" value="'+u+'"></div>'+
-      '<div><label>Passwort</label><input type="password" autocomplete="off" id="p'+i+'"></div></div>';
+      '<div><label data-i18n="pass"></label><input type="password" autocomplete="off" id="p'+i+'"></div></div>';
   }
   box.innerHTML=html;
   if(saved.length) el("remember").checked=true;
@@ -579,6 +684,23 @@ function pad(n){return (n<10?"0":"")+n;}
   for(var yy=y;yy>=y-8;yy--) h+='<option value="'+yy+'">'+yy+'</option>';
   sel.innerHTML=h; sel.value=y-1;
 })();
+
+// --- Sprache anwenden ---
+function applyLang(){
+  document.documentElement.setAttribute("lang",lang);
+  document.title=t("title");
+  var nodes=document.querySelectorAll("[data-i18n]");
+  Array.prototype.forEach.call(nodes,function(n){n.textContent=t(n.getAttribute("data-i18n"));});
+  var tags=document.querySelectorAll("[data-acctag]");
+  Array.prototype.forEach.call(tags,function(n,i){n.textContent=t("account")+" "+(i+1);});
+  el("langDe").classList.toggle("active",lang==="de");
+  el("langHr").classList.toggle("active",lang==="hr");
+  updateInfo();
+  if(LAST) render(LAST);
+}
+function setLang(l){lang=(l==="hr")?"hr":"de";try{localStorage.setItem(LS_LANG,lang);}catch(e){}applyLang();}
+el("langDe").addEventListener("click",function(){setLang("de");});
+el("langHr").addEventListener("click",function(){setLang("hr");});
 
 // --- Zeitraum-Umschalter ---
 el("seg").addEventListener("click",function(e){
@@ -598,19 +720,24 @@ el("seg").addEventListener("click",function(e){
 
 function currentPeriod(){
   var y=new Date().getFullYear();
-  if(mode==="year") return {from:y+"-01-01",to:y+"-12-31",label:"Kalenderjahr "+y};
-  if(mode==="pastyear"){var yy=el("yearSel").value;return {from:yy+"-01-01",to:yy+"-12-31",label:"Kalenderjahr "+yy};}
-  return {from:el("dFrom").value,to:el("dTo").value,label:null};
+  if(mode==="year") return {from:y+"-01-01",to:y+"-12-31"};
+  if(mode==="pastyear"){var yy=el("yearSel").value;return {from:yy+"-01-01",to:yy+"-12-31"};}
+  return {from:el("dFrom").value,to:el("dTo").value};
 }
 function updateInfo(){
   var p=currentPeriod();
-  el("periodInfo").textContent = p.from&&p.to ? ("Abfrage: "+p.from+" bis "+p.to) : "Bitte Von- und Bis-Datum wählen.";
+  el("periodInfo").textContent = p.from&&p.to
+    ? (t("query")+" "+p.from+" "+t("between")+" "+p.to) : t("pickPeriod");
 }
-// Standard-Datumsfelder vorbelegen
-(function(){var y=new Date().getFullYear();el("dFrom").value=y+"-01-01";el("dTo").value=todayISO();updateInfo();})();
+(function(){var y=new Date().getFullYear();el("dFrom").value=y+"-01-01";el("dTo").value=todayISO();})();
 
 function showError(msg){el("err").textContent=msg;el("err").classList.remove("hidden");window.scrollTo(0,0);}
 function clearError(){el("err").classList.add("hidden");}
+function serverMsg(body){
+  if(body&&body.code&&tr("err_"+body.code)) return tr("err_"+body.code);
+  if(body&&body.error) return body.error;
+  return t("e_query");
+}
 
 // --- Abfrage senden ---
 el("go").addEventListener("click",function(){
@@ -620,31 +747,29 @@ el("go").addEventListener("click",function(){
     var u=el("u"+i).value.trim(),p=el("p"+i).value;
     if(u&&p) accounts.push({username:u,password:p});
   }
-  if(!accounts.length){showError("Bitte für mindestens einen Account Benutzername UND Passwort eingeben.");return;}
+  if(!accounts.length){showError(t("v_account"));return;}
 
   var p=currentPeriod();
-  if(!p.from||!p.to){showError("Bitte einen gültigen Zeitraum wählen.");return;}
-  if(p.to<p.from){showError("Das Bis-Datum liegt vor dem Von-Datum.");return;}
+  if(!p.from||!p.to){showError(t("v_period"));return;}
+  if(p.to<p.from){showError(t("v_order"));return;}
 
-  // Benutzernamen merken (nur Namen)
   if(el("remember").checked){
     var names=[]; for(var j=0;j<3;j++) names.push(el("u"+j).value.trim());
     try{localStorage.setItem(LS_KEY,JSON.stringify(names));}catch(e){}
   } else { try{localStorage.removeItem(LS_KEY);}catch(e){} }
 
   var btn=el("go"); btn.disabled=true;
-  btn.innerHTML='<span class="spin"></span>Abfrage läuft … ('+accounts.length+' Account/s)';
+  btn.innerHTML='<span class="spin"></span>'+t("loading")+" ("+accounts.length+")";
 
   fetch("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({accounts:accounts,date_from:p.from,date_to:p.to})})
   .then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});})
   .then(function(res){
-    if(res.status!==200){showError(res.body&&res.body.error?res.body.error:"Fehler bei der Abfrage.");return;}
-    render(res.body);
+    if(res.status!==200){showError(serverMsg(res.body));return;}
+    LAST=res.body; render(res.body);
   })
-  .catch(function(e){showError("Keine Verbindung zum lokalen Server. Läuft evisitor_proxy.py noch in a-Shell? ("+e+")");})
-  .finally(function(){btn.disabled=false;btn.textContent="Übernachtungen abfragen";
-    // Passwortfelder aus dem DOM leeren (nur im Speicher, nichts gespeichert)
+  .catch(function(e){showError(t("e_conn")+" ("+e+")");})
+  .finally(function(){btn.disabled=false;btn.textContent=t("go");
     for(var i=0;i<3;i++) el("p"+i).value="";});
 });
 
@@ -653,7 +778,8 @@ function render(data){
   var rows="";
   data.results.forEach(function(r){
     if(!r.ok){
-      rows+='<tr class="err"><td>'+esc(r.username)+'</td><td colspan="3">Fehler: '+esc(r.error||"")+'</td></tr>';
+      var emsg=(r.code&&tr("err_"+r.code))||r.error||"";
+      rows+='<tr class="err"><td>'+esc(r.username)+'</td><td colspan="3">'+esc(t("errWord")+": "+emsg)+'</td></tr>';
       return;
     }
     var s=r.stats;
@@ -662,23 +788,23 @@ function render(data){
     rows+='<tr><td>'+esc(r.username)+'</td><td class="num big">'+s.total_nights+
           '</td><td class="num">'+s.open_nights+'</td><td class="num">'+s.guests+'</td></tr>';
   });
-  rows+='<tr class="total"><td>GESAMT</td><td class="num big">'+totN+
+  rows+='<tr class="total"><td>'+t("total")+'</td><td class="num big">'+totN+
         '</td><td class="num">'+totOpen+'</td><td class="num">'+totG+'</td></tr>';
   el("accRows").innerHTML=rows;
   el("kNights").textContent=totN;el("kOpen").textContent=totOpen;el("kGuests").textContent=totG;
-  el("periodLabel").textContent="("+data.date_from+" bis "+data.date_to+")";
+  el("periodLabel").textContent="("+data.date_from+" "+t("between")+" "+data.date_to+")";
 
   // Balkendiagramm
   var keys=Object.keys(months).sort();
   var max=0; keys.forEach(function(k){if(months[k]>max)max=months[k];}); if(!max)max=1;
   var bars="";
   keys.forEach(function(k){
-    var parts=k.split("-"),lab=MONTHS[parseInt(parts[1],10)-1]+" "+parts[0];
+    var parts=k.split("-"),lab=MONTHS[lang][parseInt(parts[1],10)-1]+" "+parts[0];
     var pct=Math.round(months[k]/max*100);
     bars+='<div class="barrow"><div class="barlabel">'+lab+'</div>'+
       '<div class="bartrack"><div class="bar" style="width:'+pct+'%"><span>'+months[k]+'</span></div></div></div>';
   });
-  el("bars").innerHTML=bars||'<p class="note">Keine Monatsdaten im Zeitraum.</p>';
+  el("bars").innerHTML=bars||'<p class="note">'+t("noMonthData")+'</p>';
 
   // Gästeliste pro Account (aufklappbar)
   var gh="";
@@ -687,25 +813,26 @@ function render(data){
     var list=r.stats.guest_list||[];
     var rowsG="";
     list.forEach(function(g){
-      var co = g.checkout ? g.checkout : '<span class="tagopen">offen</span>';
+      var co = g.checkout ? g.checkout : '<span class="tagopen">'+t("open")+'</span>';
       rowsG+='<tr><td>'+esc(g.name)+'</td><td>'+g.checkin+'</td><td>'+co+
              '</td><td class="num">'+g.nights+'</td></tr>';
     });
-    if(!rowsG) rowsG='<tr><td colspan="4" class="note">Keine Gäste im Zeitraum.</td></tr>';
+    if(!rowsG) rowsG='<tr><td colspan="4" class="note">'+t("noGuests")+'</td></tr>';
     gh+='<details><summary><span>'+esc(r.username)+'</span>'+
-        '<span class="badge">'+list.length+' Gäste · '+r.stats.total_nights+' Nächte</span></summary>'+
-        '<table class="gtable"><thead><tr><th>Gast</th><th>Anreise</th>'+
-        '<th>Abreise</th><th style="text-align:right">Nächte</th></tr></thead>'+
+        '<span class="badge">'+list.length+' '+t("guestsWord")+' · '+r.stats.total_nights+' '+t("nightsWord")+'</span></summary>'+
+        '<table class="gtable"><thead><tr><th>'+t("thGuest")+'</th><th>'+t("thArrival")+'</th>'+
+        '<th>'+t("thDeparture")+'</th><th style="text-align:right">'+t("thNightsShort")+'</th></tr></thead>'+
         '<tbody>'+rowsG+'</tbody></table></details>';
   });
-  el("guests").innerHTML=gh||'<p class="note">Keine Gästedaten.</p>';
+  el("guests").innerHTML=gh||'<p class="note">'+t("noGuestData")+'</p>';
 
   var d=new Date();
-  el("footer").textContent="Erstellt am "+pad(d.getDate())+"."+pad(d.getMonth()+1)+"."+d.getFullYear()+
-    " "+pad(d.getHours())+":"+pad(d.getMinutes())+" · lokal auf dem iPad berechnet";
+  el("footer").textContent=pad(d.getDate())+"."+pad(d.getMonth()+1)+"."+d.getFullYear()+
+    " "+pad(d.getHours())+":"+pad(d.getMinutes())+" · "+t("footerTxt");
   el("results").classList.remove("hidden");
-  el("results").scrollIntoView({behavior:"smooth"});
 }
+
+applyLang();  // initiale Sprache setzen
 </script></body></html>"""
 
 
