@@ -88,8 +88,12 @@ es in der Proxy-Oberfläche und in der Scriptable-Version.
    den Zeitraum-Knopf antippen (laufendes Jahr / anderes Jahr / Von–Bis).
    Der Knopf „Jezik/Sprache" schaltet DE↔HR um (wird gemerkt).
 5. Der Report (Summen, pro Account, Monats-Balken, Gästeliste) öffnet sich
-   als Seite. Benutzernamen + Sprache werden im iOS-Schlüsselbund gemerkt,
-   Passwörter nie.
+   als Seite. Benutzernamen + Sprache werden im iOS-Schlüsselbund gemerkt.
+6. **Optional – „Passwörter merken":** Über den Knopf im Startmenü lässt sich
+   das Speichern der Passwörter einschalten (Standard: AUS). Sie liegen dann
+   **verschlüsselt im iOS-Schlüsselbund nur dieses Geräts** (derselbe
+   Mechanismus wie Safari-Passwörter) und werden beim Ausschalten der Option
+   sofort wieder gelöscht.
 
 iOS übernimmt hier Netzwerk, Cookies und TLS nativ – deshalb sind weder
 CORS-Tricks noch ein lokaler Server nötig.

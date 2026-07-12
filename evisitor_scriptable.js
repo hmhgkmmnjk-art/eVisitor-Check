@@ -29,6 +29,8 @@ const CHECKOUT_FIELD = "CheckOutTime";    // Abreise (leer = noch anwesend)
 const LOOKBACK_DAYS = 370;                // Vorlauf für hineinragende Aufenthalte
 const PSIZE = 500;
 const KC_USERS = "evisitor_usernames";
+const KC_PASS = "evisitor_passwords";     // nur wenn "Passwörter merken" EIN
+const KC_SAVEPW = "evisitor_savepw";
 const KC_LANG = "evisitor_lang";
 
 // ------------------------------ Übersetzungen -----------------------------
@@ -39,6 +41,7 @@ const I18N = {
     user: "Benutzername", pass: "Passwort",
     runYear: "Abfragen: laufendes Jahr", runOther: "Abfragen: anderes Jahr",
     runRange: "Abfragen: Von–Bis", langBtn: "Jezik: Hrvatski",
+    pwOn: "Passwörter merken: EIN ✓", pwOff: "Passwörter merken: AUS",
     cancel: "Abbrechen", ok: "OK",
     yearTitle: "Jahr wählen", yearField: "Jahr (z. B. 2024)",
     rangeTitle: "Zeitraum wählen", fromField: "Von (JJJJ-MM-TT)", toField: "Bis (JJJJ-MM-TT)",
@@ -68,6 +71,7 @@ const I18N = {
     user: "Korisničko ime", pass: "Lozinka",
     runYear: "Dohvati: tekuća godina", runOther: "Dohvati: druga godina",
     runRange: "Dohvati: Od–Do", langBtn: "Sprache: Deutsch",
+    pwOn: "Zapamti lozinke: DA ✓", pwOff: "Zapamti lozinke: NE",
     cancel: "Odustani", ok: "U redu",
     yearTitle: "Odaberite godinu", yearField: "Godina (npr. 2024)",
     rangeTitle: "Odaberite razdoblje", fromField: "Od (GGGG-MM-DD)", toField: "Do (GGGG-MM-DD)",
@@ -403,6 +407,13 @@ async function main() {
   try {
     if (Keychain.contains(KC_USERS)) savedUsers = JSON.parse(Keychain.get(KC_USERS));
   } catch (e) {}
+  // "Passwörter merken" (opt-in): Ablage im iOS-Schlüsselbund dieses Geräts
+  let savePw = false;
+  try { savePw = Keychain.contains(KC_SAVEPW) && Keychain.get(KC_SAVEPW) === "1"; } catch (e) {}
+  let savedPass = ["", "", ""];
+  try {
+    if (savePw && Keychain.contains(KC_PASS)) savedPass = JSON.parse(Keychain.get(KC_PASS));
+  } catch (e) {}
 
   while (true) {
     const T = I18N[lang];
@@ -413,25 +424,29 @@ async function main() {
     a.message = T.subtitle;
     for (let i = 0; i < 3; i++) {
       a.addTextField(T.user + " " + (i + 1), savedUsers[i] || "");
-      a.addSecureTextField(T.pass + " " + (i + 1), "");
+      a.addSecureTextField(T.pass + " " + (i + 1), savePw ? (savedPass[i] || "") : "");
     }
     a.addAction(T.runYear + " (" + year + ")");
     a.addAction(T.runOther);
     a.addAction(T.runRange);
     a.addAction(T.langBtn);
+    a.addAction(savePw ? T.pwOn : T.pwOff);
     a.addCancelAction(T.cancel);
     const idx = await a.present();
     if (idx === -1) return;
 
     const accounts = [];
     const users = [];
+    const passes = [];
     for (let i = 0; i < 3; i++) {
       const u = (a.textFieldValue(i * 2) || "").trim();
       const p = a.textFieldValue(i * 2 + 1) || "";
       users.push(u);
+      passes.push(p);
       if (u && p) accounts.push({ u, p });
     }
     savedUsers = users;
+    savedPass = passes;                    // Eingaben beim Menü-Wechsel behalten
     try { Keychain.set(KC_USERS, JSON.stringify(users)); } catch (e) {}
 
     if (idx === 3) {                       // Sprache umschalten
@@ -439,6 +454,19 @@ async function main() {
       try { Keychain.set(KC_LANG, lang); } catch (e) {}
       continue;
     }
+    if (idx === 4) {                       // "Passwörter merken" umschalten
+      savePw = !savePw;
+      try {
+        Keychain.set(KC_SAVEPW, savePw ? "1" : "0");
+        if (!savePw && Keychain.contains(KC_PASS)) Keychain.remove(KC_PASS);
+      } catch (e) {}
+      continue;
+    }
+    // Passwörter je nach Einstellung speichern oder sicher entfernen
+    try {
+      if (savePw) Keychain.set(KC_PASS, JSON.stringify(passes));
+      else if (Keychain.contains(KC_PASS)) Keychain.remove(KC_PASS);
+    } catch (e) {}
 
     let fromDay, toDay;
     if (idx === 0) { fromDay = dayOf(year, 1, 1); toDay = dayOf(year, 12, 31); }
