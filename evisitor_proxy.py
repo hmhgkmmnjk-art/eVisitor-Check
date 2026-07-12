@@ -205,14 +205,24 @@ def do(opener, req):
     return opener.open(req, timeout=HTTP_TIMEOUT)
 
 
-def make_opener():
-    cj = http.cookiejar.CookieJar()
-    handlers = [urllib.request.HTTPCookieProcessor(cj)]
+def make_ssl_context():
+    """Akzeptiert den veralteten schwachen DH-Schlüssel von evisitor.hr
+    (SECLEVEL=1). Zertifikatsprüfung bleibt aktiv (außer bei --insecure)."""
+    ctx = ssl.create_default_context()
+    try:
+        ctx.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
     if INSECURE:
-        ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+    return ctx
+
+
+def make_opener():
+    cj = http.cookiejar.CookieJar()
+    handlers = [urllib.request.HTTPCookieProcessor(cj),
+                urllib.request.HTTPSHandler(context=make_ssl_context())]
     op = urllib.request.build_opener(*handlers)
     op.addheaders = [("User-Agent", "eVisitor-Nocenja/1.0 (a-Shell)"),
                      ("Accept", "application/json, text/plain, */*")]

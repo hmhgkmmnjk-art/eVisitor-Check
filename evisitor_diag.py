@@ -28,6 +28,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import http.cookiejar
+import ssl
 
 LOGIN_PATH = "/Resources/AspNetFormsAuth/Authentication/Login"
 
@@ -79,9 +80,21 @@ def assert_read_only(req):
                        % (method, req.full_url))
 
 
+def make_ssl_context():
+    """TLS-Kontext, der auch den veralteten schwachen DH-Schlüssel von
+    evisitor.hr akzeptiert (SECLEVEL=1). Zertifikatsprüfung bleibt aktiv."""
+    ctx = ssl.create_default_context()
+    try:
+        ctx.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
+    return ctx
+
+
 def make_opener():
     cj = http.cookiejar.CookieJar()
-    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    https = urllib.request.HTTPSHandler(context=make_ssl_context())
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), https)
     op.addheaders = [("User-Agent", "eVisitor-Diag/1.0 (read-only)"),
                      ("Accept", "application/json, text/plain, */*")]
     return op

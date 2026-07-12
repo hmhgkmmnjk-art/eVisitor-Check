@@ -276,12 +276,18 @@ def prompt_period(args, today):
 # ---------------------------------------------------------------------------
 def make_opener(insecure):
     cookiejar = http.cookiejar.CookieJar()
-    handlers = [urllib.request.HTTPCookieProcessor(cookiejar)]
+    # SECLEVEL=1 akzeptiert den veralteten schwachen DH-Schlüssel von
+    # evisitor.hr. Zertifikatsprüfung bleibt aktiv (außer bei --insecure).
+    ctx = ssl.create_default_context()
+    try:
+        ctx.set_ciphers("DEFAULT@SECLEVEL=1")
+    except ssl.SSLError:
+        pass
     if insecure:
-        ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+    handlers = [urllib.request.HTTPCookieProcessor(cookiejar),
+                urllib.request.HTTPSHandler(context=ctx)]
     opener = urllib.request.build_opener(*handlers)
     opener.addheaders = [
         ("User-Agent", "eVisitor-Nocenja/1.0 (a-Shell iPad)"),
