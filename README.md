@@ -158,35 +158,25 @@ Ablauf:
 
 ---
 
-## ⚠️ Ein Wert muss evtl. noch angepasst werden
+## Anmeldung & Datenquelle (fertig konfiguriert)
 
-Der Endpunkt, der die einzelnen Gäste-Anmeldungen mit An-/Abreise liefert, steht
-nur in der **login-geschützten** offiziellen Web-API-Wiki. Ich konnte ihn nicht
-öffentlich auslesen. In **beiden** Dateien (`evisitor_proxy.py` **und**
-`evisitor_nocenja.py`) steht oben derselbe Konfigurationsblock mit Platzhaltern –
-passe ihn in der Datei an, die du nutzt:
+Die App ist vollständig auf die eVisitor Web-API eingestellt – nichts mehr
+anzupassen:
 
-```python
-REPORT_PATH     = "/Rest/Htz/EvidencijaGostiju"   # <-- ggf. anpassen
-DATE_PARAM_FROM = "datumOd"                        # <-- ggf. anpassen
-DATE_PARAM_TO   = "datumDo"                        # <-- ggf. anpassen
-```
+- **Produktions-API:** `https://www.evisitor.hr/eVisitorRhetos_API`
+- **Login:** nur **Benutzername + Passwort** (Feld `userName`/`password`).
+  In der Produktion **kein API-Schlüssel und keine TAN** nötig (der `apikey`
+  gilt nur für die Testplattform). Antwort `true`/`false`.
+- **Daten:** Ressource `Rest/Htz/Tourist/`, gelesen mit
+  `?sort=ID&page=…&psize=…&filters=[…]` (Antwort `{Records:[…]}`).
+- **Felder:** Anreise `TimeStayFrom`, Abreise `CheckOutTime` (leer = noch
+  anwesend → offener Aufenthalt), Name `TouristName`/`TouristSurname`.
+- Aufenthalte, die **vor** dem Zeitraum begannen und hineinragen, werden über
+  ein Vorlauf-Fenster (`REPORT_LOOKBACK_DAYS`) miterfasst und auf den Zeitraum
+  zugeschnitten.
 
-**So ermittelst du den echten Wert (einmalig, ~2 Min):**
-
-- Bequem: `python3 evisitor_nocenja.py --discover` → loggt einen Account ein und
-  zeigt die Roh-Antwort; passt der Pfad nicht, siehst du sofort den Fehler.
-- Oder: im Browser auf evisitor.hr einloggen, die Gäste-/Evidenzliste öffnen,
-  **Web-Inspektor → Netzwerk** → den JSON-Aufruf ansehen (Pfad + Datums-Parameter
-  + Feldnamen für An-/Abreise).
-
-Die eigentliche Übernachtungs-Berechnung ist bereits fertig und getestet – sobald
-der richtige Pfad eingetragen ist, läuft alles durch. Die Feldnamen für An-/Abreise
-werden bereits in vielen Varianten automatisch erkannt (siehe `CHECKIN_FIELDS` /
-`CHECKOUT_FIELDS`).
-
-Wenn du mir eine Beispiel-Antwort von `--discover` schickst, trage ich Pfad und
-Feldnamen exakt für dich ein.
+Das Diagnose-Skript `evisitor_diag.py` wird für den normalen Betrieb **nicht**
+mehr gebraucht – es diente nur der Ermittlung dieser Werte.
 
 ---
 
@@ -194,7 +184,7 @@ Feldnamen exakt für dich ein.
 
 - „Login fehlgeschlagen (Benutzername/Passwort falsch)."
 - „Keine Verbindung zum Server (…)."
-- „Report-Endpunkt lieferte keine erkennbare Liste …" (→ `REPORT_PATH` prüfen)
+- „Report-Aufruf HTTP … " (Server-/Berechtigungsproblem)
 
 Ein Fehler bei einem Account stoppt die anderen nicht – er wird in Tabelle und
 Report klar markiert.

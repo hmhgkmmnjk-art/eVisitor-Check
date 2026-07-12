@@ -32,6 +32,7 @@ Ergebnis: Datei "evisitor_report.html" – in Safari öffnen.
 
 import sys
 import os
+import re
 import json
 import argparse
 import getpass
@@ -55,37 +56,17 @@ LOGIN_PATH = "/Resources/AspNetFormsAuth/Authentication/Login"
 # API-Schlüssel nur für die Testplattform nötig; Produktion braucht keinen.
 API_KEY = ""
 
-# ---------------------------------------------------------------------------
-# WICHTIG – DIESEN EINEN WERT MUSST DU EVTL. ANPASSEN:
-#
-# Der Report-Endpunkt, der die einzelnen Gäste-Anmeldungen mit An- und
-# Abreisedatum liefert, steht nur in der login-geschützten offiziellen
-# Web-API-Wiki (Kapitel "REST resources", Bereich Htz). Trage ihn hier ein.
-#
-# So findest du ihn in 2 Minuten:
-#   1. Melde dich im Browser (auch am iPad) auf https://www.evisitor.hr an.
-#   2. Öffne die Gäste-/Evidenz-Liste, die dir An-/Abreise zeigt.
-#   3. Web-Inspektor -> Netzwerk -> den JSON-Aufruf anschauen (Pfad + Felder).
-#   4. Alternativ: dieses Skript mit "--discover" starten – es probiert den
-#      unten gesetzten Pfad und zeigt die Roh-Antwort an.
-#
-# REPORT_PATH: Pfad relativ zur API-Wurzel. Platzhalter unten anpassen.
-# DATE_PARAM_FROM / _TO: Namen der Datums-Query-Parameter (Von/Bis).
-# ---------------------------------------------------------------------------
-REPORT_PATH = "/Rest/Htz/EvidencijaGostiju"       # <-- ggf. anpassen
-DATE_PARAM_FROM = "datumOd"                        # <-- ggf. anpassen
-DATE_PARAM_TO = "datumDo"                          # <-- ggf. anpassen
+# eVisitor-Ressource für Gäste-/Aufenthaltsdaten (per Diagnose bestätigt).
+# Gelesen wird mit ?sort=ID&page=..&psize=..&filters=[..]; Antwort {Records:[]}.
+REPORT_PATH = "/Rest/Htz/Tourist/"
+ARRIVAL_FIELD = "TimeStayFrom"         # Anreise-Zeitpunkt (Filterfeld)
+REPORT_LOOKBACK_DAYS = 370             # Vorlauf, um hineinragende Aufenthalte zu erfassen
 
-# Feldnamen-Kandidaten für An-/Abreisedatum in der Antwort (mehrere Varianten,
-# damit die Auswertung auch ohne exakte Kenntnis der Spaltennamen greift).
-CHECKIN_FIELDS = [
-    "DatumDolaska", "datumDolaska", "DatumPrijave", "datumPrijave",
-    "CheckIn", "checkIn", "ArrivalDate", "arrivalDate", "DatumOd", "datumOd",
-]
-CHECKOUT_FIELDS = [
-    "DatumOdlaska", "datumOdlaska", "DatumOdjave", "datumOdjave",
-    "CheckOut", "checkOut", "DepartureDate", "departureDate", "DatumDo", "datumDo",
-]
+CHECKIN_FIELDS = ["TimeStayFrom", "StayFrom", "DatumDolaska"]
+CHECKOUT_FIELDS = ["CheckOutTime", "CheckOutDate", "DatumOdlaska"]
+FIRSTNAME_FIELDS = ["TouristName", "Ime", "FirstName"]
+LASTNAME_FIELDS = ["TouristSurname", "Prezime", "LastName"]
+NAME_FIELDS = ["ImePrezime", "Naziv", "Name"]
 
 ACCOUNTS_FILE = "evisitor_accounts.json"   # speichert NUR Benutzernamen (optional)
 REPORT_FILE = "evisitor_report.html"
@@ -134,11 +115,19 @@ def parse_date(value):
     s = str(value).strip()
     if not s:
         return None
-    # /Date(1234567890000)/  (altes .NET-JSON-Format)
+    # /Date(1725208200000+0200)/  (.NET-JSON-Format mit Zeitzonen-Offset)
     if s.startswith("/Date(") and s.endswith(")/"):
         try:
-            ms = int(s[6:-2].split("+")[0].split("-")[0])
-            return dt.datetime.utcfromtimestamp(ms / 1000.0).date()
+            inner = s[6:-2]
+            m = re.match(r'(-?\d+)([+-]\d{2})(\d{2})', inner)
+            if m:
+                ms = int(m.group(1))
+                oh = int(m.group(2))
+                off_min = (abs(oh) * 60 + int(m.group(3))) * (1 if oh >= 0 else -1)
+            else:
+                ms = int(re.match(r'(-?\d+)', inner).group(1))
+                off_min = 0
+            return dt.datetime.utcfromtimestamp((ms + off_min * 60000) / 1000.0).date()
         except Exception:
             return None
     s = s.replace("T", " ").split(" ")[0]     # Zeitanteil abschneiden
@@ -389,20 +378,29 @@ def extract_records(payload):
 
 
 def fetch_records(opener, root, date_from, date_to):
-    """Holt die Gäste-Anmeldungen (mit An-/Abreise) für den Zeitraum."""
-    params = {
-        DATE_PARAM_FROM: date_from.isoformat(),
-        DATE_PARAM_TO: date_to.isoformat(),
-    }
-    payload, raw = api_get_json(opener, root, REPORT_PATH, params)
-    records = extract_records(payload)
-    if not records and raw and raw.strip() not in ("[]", "{}"):
-        raise RuntimeError(
-            "Report-Endpunkt lieferte keine erkennbare Liste. "
-            "Bitte REPORT_PATH/Feldnamen in der Konfiguration prüfen "
-            "(Skript mit --discover starten)."
-        )
-    return records, raw
+    """Holt die Tourist-Anmeldungen im (erweiterten) Zeitraum, seitenweise.
+    Gefiltert über den Anreise-Zeitpunkt; Vorlauf-Fenster erfasst
+    hineinragende Aufenthalte. Antwortformat {Records:[...]}."""
+    lo = (date_from - dt.timedelta(days=REPORT_LOOKBACK_DAYS)).isoformat() + "T00:00:00"
+    hi = date_to.isoformat() + "T23:59:59"
+    filters = [
+        {"Property": ARRIVAL_FIELD, "Operation": "greaterequal", "Value": lo},
+        {"Property": ARRIVAL_FIELD, "Operation": "lessequal", "Value": hi},
+    ]
+    fenc = urllib.parse.quote(json.dumps(filters))
+    all_records, last_raw = [], ""
+    page, psize = 1, 500
+    while True:
+        path = "%s?sort=ID&page=%d&psize=%d&filters=%s" % (REPORT_PATH, page, psize, fenc)
+        payload, last_raw = api_get_json(opener, root, path)
+        recs = extract_records(payload)
+        all_records.extend(recs)
+        if len(recs) < psize:
+            break
+        page += 1
+        if page > 100:
+            break
+    return all_records, last_raw
 
 
 # ---------------------------------------------------------------------------
@@ -648,20 +646,20 @@ def run_discover(root, insecure):
     except RuntimeError as e:
         fail(str(e))
     today = dt.date.today()
-    df, dtx = current_year_range(today)
-    print("Rufe %s (%s..%s) ab ...\n" % (REPORT_PATH, df, dtx))
+    df = dt.date(today.year, 1, 1).isoformat() + "T00:00:00"
+    path = "%s?sort=ID&page=1&psize=3&filters=%s" % (
+        REPORT_PATH,
+        urllib.parse.quote(json.dumps(
+            [{"Property": ARRIVAL_FIELD, "Operation": "greaterequal", "Value": df}])))
+    print("Rufe %s ab ...\n" % REPORT_PATH)
     try:
-        _, raw = api_get_json(opener, root, REPORT_PATH,
-                              {DATE_PARAM_FROM: df.isoformat(), DATE_PARAM_TO: dtx.isoformat()})
+        _, raw = api_get_json(opener, root, path)
     except RuntimeError as e:
         print(red(str(e)))
-        print(yellow("\nEndpunkt/Parameter stimmen vermutlich nicht. Bitte REPORT_PATH,\n"
-                     "DATE_PARAM_FROM/TO oben im Skript anpassen (Web-Inspektor im Browser)."))
         return
     print(bold("--- Roh-Antwort (erste 3000 Zeichen) ---"))
     print(raw[:3000])
     print(bold("\n--- Ende ---"))
-    print("Trage den korrekten Report-Pfad und die Feldnamen oben im Skript ein.")
 
 
 # ---------------------------------------------------------------------------
