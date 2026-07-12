@@ -145,7 +145,7 @@ def main():
     except Exception:
         pass
     print("=" * 68)
-    print(" eVisitor Diagnose v8 – Ressourcensuche (NUR LESEN)")
+    print(" eVisitor Diagnose v9 – volle Fehler + Filter (NUR LESEN)")
     print("=" * 68)
     print("TLS: %s" % ssl.OPENSSL_VERSION)
 
@@ -189,6 +189,10 @@ def main():
     base, op = session
     print("\n✅ Angemeldet an: %s" % base)
 
+    # Kurzliste vielversprechender Ressourcen für den 2. Versuch (mit Filter):
+    shortlist = ["Tourist", "FacilityBrowse", "TTPayerUnion", "TouristCheckIn",
+                 "CheckedInTourist"]
+
     # 2) Ressourcen probieren:
     #    200      = lesbar (Treffer, Felder anzeigen)
     #    400/401  = Ressource existiert, aber nicht berechtigt
@@ -219,7 +223,32 @@ def main():
         elif code == 404:
             pass  # gibt's nicht – still
         else:
-            print("  %-4s   %-30s %s" % (code, name, (raw or "")[:70]))
+            # 400 o. Ä.: VOLLE Meldung zeigen (verrät oft den Pflicht-Parameter)
+            print("  %-4s   %-30s" % (code, name))
+            print("        %s" % (raw or "").strip()[:400])
+
+    # 3) Zweiter Versuch: mit leerem Filter bzw. RecordsAndTotalCount
+    print("\n--- 3) Zweiter Versuch (mit filters=[] / RecordsAndTotalCount) ---")
+    for name in shortlist:
+        for label, suffix in (
+            ("filters=[]", "/?filters=%5B%5D&page=1&psize=1"),
+            ("RecordsAndTotalCount", "/RecordsAndTotalCount?page=1&psize=1"),
+        ):
+            code, raw = get(op, base, "/Rest/Htz/%s%s" % (name, suffix))
+            if code == 200:
+                recs = records_of(raw)
+                fields = sorted(recs[0].keys()) if recs else []
+                date_fields = [f for f in fields if re.search(
+                    r'date|datum|dolask|odlask|checkin|checkout|arriv|depart', f, re.I)]
+                print("  200 ✅ %-22s (%s) Felder=%d %s" % (
+                    name, label, len(fields),
+                    ("| Datum: " + ", ".join(date_fields)) if date_fields else
+                    ("(0 Datensätze)" if not fields else "")))
+                if fields:
+                    print("        Felder: %s" % ", ".join(fields))
+                    hits.append((name, fields, date_fields, recs))
+            elif code not in (404, None):
+                print("  %-4s   %-22s (%s) %s" % (code, name, label, (raw or "").strip()[:180]))
 
     print("\n--- Zusammenfassung ---")
     if hits:
