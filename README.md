@@ -65,14 +65,34 @@ Deshalb ist die Lösung ein Python-Skript, das die gewünschte HTML-Ausgabe
 
 ---
 
-## Zwei Varianten
+## Drei Varianten
 
-| Datei | Bedienung | Vorteil |
+| Datei | App | Bedienung |
 |---|---|---|
-| **`evisitor_proxy.py`** | HTML-Oberfläche in Safari (`http://localhost:8080`) | Schönste Bedienung – Formular, Buttons, Live-Ergebnis. **Empfohlen.** |
-| **`evisitor_nocenja.py`** | Reines Terminal-Skript, erzeugt `evisitor_report.html` | Läuft ohne dauerhaft laufenden Server; robust, falls iOS a-Shell pausiert. |
+| **`evisitor_scriptable.js`** | **Scriptable** (gratis) | **Ohne Terminal/localhost:** ein Fingertipp, native Eingabemaske, Report als Seite. **Empfohlen für die einfachste Bedienung.** |
+| `evisitor_proxy.py` | a-Shell (gratis) | HTML-Oberfläche in Safari (`http://localhost:8080`), Server muss in a-Shell laufen. |
+| `evisitor_nocenja.py` | a-Shell (gratis) | Reines Terminal-Skript, erzeugt `evisitor_report.html`. |
 
-Beide nutzen dieselbe (getestete) Übernachtungs-Berechnung und dieselbe Konfiguration.
+Alle drei nutzen dieselbe (getestete) Übernachtungs-Berechnung, dieselbe API-
+Konfiguration und dieselbe Nur-Lesen-Sicherheitssperre. DE/HR-Sprachwahl gibt
+es in der Proxy-Oberfläche und in der Scriptable-Version.
+
+## Variante Scriptable – ohne a-Shell, Terminal und localhost
+
+1. **Scriptable** aus dem App Store installieren (gratis, von Simon Støvring).
+2. `evisitor_scriptable.js` in den Ordner **iCloud Drive → Scriptable** legen
+   (Datei aus GitHub laden → Dateien-App → dorthin bewegen). Alternativ: in
+   Scriptable ein neues Skript anlegen und den Dateiinhalt einfügen.
+3. Scriptable öffnen → **eVisitor-Skript antippen**.
+4. In der Eingabemaske Benutzername/Passwort (bis 3 Accounts) eintragen und
+   den Zeitraum-Knopf antippen (laufendes Jahr / anderes Jahr / Von–Bis).
+   Der Knopf „Jezik/Sprache" schaltet DE↔HR um (wird gemerkt).
+5. Der Report (Summen, pro Account, Monats-Balken, Gästeliste) öffnet sich
+   als Seite. Benutzernamen + Sprache werden im iOS-Schlüsselbund gemerkt,
+   Passwörter nie.
+
+iOS übernimmt hier Netzwerk, Cookies und TLS nativ – deshalb sind weder
+CORS-Tricks noch ein lokaler Server nötig.
 
 ---
 
