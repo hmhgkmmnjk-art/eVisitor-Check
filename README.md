@@ -7,6 +7,36 @@ zum Öffnen in Safari.
 
 ---
 
+## Sicherheit: ausschließlich lesend (keine Gäste-Anmeldungen)
+
+Das Programm kann auf eVisitor **nichts** verändern:
+
+- Es sendet nur **einen POST** (den **Login** – das erzeugt lediglich eine
+  Sitzung, **keine** Gäste-Anmeldung/„prijava turista") und danach **nur
+  GET-Abfragen** (Lesen).
+- Eine harte Sperre (`assert_read_only`) **blockiert** jeden anderen Zugriff:
+  kein POST/PUT/DELETE/PATCH, keine Pfade mit `CheckIn`, `Prijava`, `Odjava`,
+  `Save`, `Import`, `Create`, `Update`, `Delete` usw. Das gilt in **allen** drei
+  Skripten und ist mit Tests abgesichert.
+- Zugangsdaten werden **nie** in Dateien geschrieben oder committet.
+
+## Angemeldete Gäste im Zeitraum
+
+Zusätzlich zu Summen und Monats-Diagramm zeigt die Oberfläche pro Account eine
+**aufklappbare Gästeliste** (Name, Anreise, Abreise/„offen", Nächte im Zeitraum).
+
+## Diagnose (`evisitor_diag.py`)
+
+Nur-lesendes Hilfsskript, das mit deinem Login herausfindet, **welche
+API-Adresse funktioniert** und **welcher Endpunkt** die Gäste-/Übernachtungsdaten
+liefert – nötig, um `REPORT_PATH` korrekt zu setzen:
+
+```
+cd Documents
+curl -L -o evisitor_diag.py "https://raw.githubusercontent.com/hmhgkmmnjk-art/eVisitor-Check/claude/evisitor-overnight-stays-74xv0o/evisitor_diag.py"
+python3 evisitor_diag.py
+```
+
 ## Warum ein Python-Skript und nicht die gewünschte reine HTML-Datei?
 
 Das war ausdrücklich zu prüfen (Anforderung 5). Kurzfassung: **Eine lokale

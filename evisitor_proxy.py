@@ -57,8 +57,16 @@ CHECKOUT_FIELDS = [
     "DatumOdlaska", "datumOdlaska", "DatumOdjave", "datumOdjave",
     "CheckOut", "checkOut", "DepartureDate", "departureDate", "DatumDo", "datumDo",
 ]
+# Namensfelder für die Gästeliste (mehrere Varianten):
+FIRSTNAME_FIELDS = ["Ime", "ime", "FirstName", "firstName", "ImeGosta", "imeGosta"]
+LASTNAME_FIELDS = ["Prezime", "prezime", "LastName", "lastName", "PrezimeGosta", "prezimeGosta"]
+NAME_FIELDS = ["ImePrezime", "imePrezime", "Naziv", "naziv", "Name", "name", "PunoIme"]
 
-HTTP_TIMEOUT = 45
+# SICHERHEIT: Nur GET + der EINE Login-POST sind erlaubt. Alles andere blockiert.
+FORBIDDEN = ("checkin", "checkout", "prijav", "odjav", "save", "import",
+             "new", "create", "update", "delete", "insert", "add")
+
+HTTP_TIMEOUT = 20   # zügiges Timeout, damit die Abfrage bei falscher Adresse nicht hängt
 
 # Zur Laufzeit gesetzt (aus Kommandozeile):
 API_ROOT = API_ROOT_PROD
@@ -118,11 +126,23 @@ def months_between(start, end_excl):
     return res
 
 
+def guest_name(rec):
+    """Anzeigename aus verschiedenen Feldvarianten zusammensetzen."""
+    full = first_field(rec, NAME_FIELDS)
+    if full:
+        return str(full)
+    vor = first_field(rec, FIRSTNAME_FIELDS)
+    nach = first_field(rec, LASTNAME_FIELDS)
+    name = " ".join(str(x) for x in (vor, nach) if x)
+    return name or "(ohne Namen)"
+
+
 def compute_account(records, date_from, date_to, today):
     range_start = date_from
     range_end_excl = date_to + dt.timedelta(days=1)
     total_nights = open_nights = guests = open_guests = 0
     monthly = defaultdict(int)
+    guest_list = []
     for rec in records:
         if not isinstance(rec, dict):
             continue
@@ -145,17 +165,46 @@ def compute_account(records, date_from, date_to, today):
         if is_open:
             open_nights += nights
             open_guests += 1
+        guest_list.append({
+            "name": guest_name(rec),
+            "checkin": ci.isoformat(),
+            "checkout": (None if is_open else co.isoformat()),
+            "nights": nights,
+            "open": is_open,
+        })
+    guest_list.sort(key=lambda g: g["checkin"])
     monthly_json = {"%04d-%02d" % (y, m): n for (y, m), n in monthly.items()}
     return {
         "total_nights": total_nights, "open_nights": open_nights,
         "guests": guests, "open_guests": open_guests,
         "monthly": monthly_json, "records": len(records),
+        "guest_list": guest_list,
     }
 
 
 # ---------------------------------------------------------------------------
 # eVisitor-API-Aufrufe (serverseitig, mit Cookies)
 # ---------------------------------------------------------------------------
+def assert_read_only(req):
+    """Harte Sperre: nur GET, plus der EINE Login-POST. Sonst Abbruch.
+    Garantiert: keine Gäste-Anmeldung, kein Schreiben auf eVisitor."""
+    method = req.get_method().upper()
+    low = urllib.parse.urlparse(req.full_url).path.rstrip("/").lower()
+    if method == "GET":
+        for bad in FORBIDDEN:
+            if bad in low:
+                raise RuntimeError("SICHERHEIT: verdächtiger Pfad blockiert (%s)." % low)
+        return
+    if method == "POST" and low.endswith(LOGIN_PATH.rstrip("/").lower()):
+        return
+    raise RuntimeError("SICHERHEIT: nicht-lesender Zugriff blockiert (%s)." % method)
+
+
+def do(opener, req):
+    assert_read_only(req)          # Sicherheitssperre vor JEDEM Aufruf
+    return opener.open(req, timeout=HTTP_TIMEOUT)
+
+
 def make_opener():
     cj = http.cookiejar.CookieJar()
     handlers = [urllib.request.HTTPCookieProcessor(cj)]
@@ -176,7 +225,7 @@ def api_login(opener, username, password):
     req = urllib.request.Request(API_ROOT + LOGIN_PATH, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
-        with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
+        with do(opener, req) as resp:
             resp.read()
         return True
     except urllib.error.HTTPError as e:
@@ -209,7 +258,7 @@ def fetch_records(opener, date_from, date_to):
     url = API_ROOT + REPORT_PATH + "?" + query
     req = urllib.request.Request(url, method="GET")
     try:
-        with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
+        with do(opener, req) as resp:
             raw = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         raise RuntimeError("Report-Aufruf HTTP %d – bitte REPORT_PATH prüfen." % e.code)
@@ -383,6 +432,15 @@ HTML_PAGE = r"""<!doctype html>
   @keyframes sp{to{transform:rotate(360deg)}}
   footer{color:var(--muted);font-size:12px;text-align:center;margin-top:6px}
   .note{font-size:12px;color:var(--muted);margin-top:8px}
+  details{border:1px solid var(--line);border-radius:11px;margin-bottom:10px;overflow:hidden}
+  summary{padding:12px 14px;cursor:pointer;font-weight:600;background:var(--total);
+          list-style:none;display:flex;justify-content:space-between;gap:10px}
+  summary::-webkit-details-marker{display:none}
+  summary .badge{font-weight:400;color:var(--muted);font-size:13px}
+  .gtable{font-size:14px}
+  .gtable td,.gtable th{padding:9px 8px}
+  .tagopen{display:inline-block;background:rgba(37,99,235,.15);color:var(--accent2);
+           border-radius:6px;padding:1px 7px;font-size:12px;font-weight:600}
 </style></head><body><div class="wrap">
   <h1>eVisitor – Übernachtungen (noćenja)</h1>
   <div class="sub">Läuft lokal auf dem iPad · Passwörter werden nicht gespeichert</div>
@@ -435,6 +493,10 @@ HTML_PAGE = r"""<!doctype html>
     <div class="card">
       <h2>Übernachtungen pro Monat</h2>
       <div id="bars"></div>
+    </div>
+    <div class="card">
+      <h2>Angemeldete Gäste im Zeitraum</h2>
+      <div id="guests"></div>
     </div>
     <footer id="footer"></footer>
   </div>
@@ -572,6 +634,26 @@ function render(data){
       '<div class="bartrack"><div class="bar" style="width:'+pct+'%"><span>'+months[k]+'</span></div></div></div>';
   });
   el("bars").innerHTML=bars||'<p class="note">Keine Monatsdaten im Zeitraum.</p>';
+
+  // Gästeliste pro Account (aufklappbar)
+  var gh="";
+  data.results.forEach(function(r){
+    if(!r.ok){return;}
+    var list=r.stats.guest_list||[];
+    var rowsG="";
+    list.forEach(function(g){
+      var co = g.checkout ? g.checkout : '<span class="tagopen">offen</span>';
+      rowsG+='<tr><td>'+esc(g.name)+'</td><td>'+g.checkin+'</td><td>'+co+
+             '</td><td class="num">'+g.nights+'</td></tr>';
+    });
+    if(!rowsG) rowsG='<tr><td colspan="4" class="note">Keine Gäste im Zeitraum.</td></tr>';
+    gh+='<details><summary><span>'+esc(r.username)+'</span>'+
+        '<span class="badge">'+list.length+' Gäste · '+r.stats.total_nights+' Nächte</span></summary>'+
+        '<table class="gtable"><thead><tr><th>Gast</th><th>Anreise</th>'+
+        '<th>Abreise</th><th style="text-align:right">Nächte</th></tr></thead>'+
+        '<tbody>'+rowsG+'</tbody></table></details>';
+  });
+  el("guests").innerHTML=gh||'<p class="note">Keine Gästedaten.</p>';
 
   var d=new Date();
   el("footer").textContent="Erstellt am "+pad(d.getDate())+"."+pad(d.getMonth()+1)+"."+d.getFullYear()+

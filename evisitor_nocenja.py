@@ -290,6 +290,30 @@ def make_opener(insecure):
     return opener, cookiejar
 
 
+# SICHERHEIT: Nur GET + der EINE Login-POST erlaubt. Alles andere blockiert.
+_FORBIDDEN = ("checkin", "checkout", "prijav", "odjav", "save", "import",
+              "new", "create", "update", "delete", "insert", "add")
+
+
+def assert_read_only(req):
+    """Harte Sperre: kein Schreiben auf eVisitor (keine Gäste-Anmeldung)."""
+    method = req.get_method().upper()
+    low = urllib.parse.urlparse(req.full_url).path.rstrip("/").lower()
+    if method == "GET":
+        for bad in _FORBIDDEN:
+            if bad in low:
+                raise RuntimeError("SICHERHEIT: verdächtiger Pfad blockiert (%s)." % low)
+        return
+    if method == "POST" and low.endswith(LOGIN_PATH.rstrip("/").lower()):
+        return
+    raise RuntimeError("SICHERHEIT: nicht-lesender Zugriff blockiert (%s)." % method)
+
+
+def _open(opener, req):
+    assert_read_only(req)          # Sicherheitssperre vor JEDEM Aufruf
+    return opener.open(req, timeout=HTTP_TIMEOUT)
+
+
 def api_login(opener, root, username, password):
     """Loggt einen Account ein. Cookies landen automatisch im CookieJar."""
     url = root + LOGIN_PATH
@@ -301,7 +325,7 @@ def api_login(opener, root, username, password):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
-        with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
+        with _open(opener, req) as resp:
             resp.read()
             return True
     except urllib.error.HTTPError as e:
@@ -319,7 +343,7 @@ def api_get_json(opener, root, path, params=None):
         url += ("&" if "?" in url else "?") + query
     req = urllib.request.Request(url, method="GET")
     try:
-        with opener.open(req, timeout=HTTP_TIMEOUT) as resp:
+        with _open(opener, req) as resp:
             raw = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         raise RuntimeError("Report-Aufruf HTTP %d bei %s" % (e.code, path))
