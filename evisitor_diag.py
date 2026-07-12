@@ -40,15 +40,21 @@ BASES = [
     "https://www.evisitor.hr/testApi",              # Test (braucht apikey)
 ]
 
-# Kandidaten für die Ressource mit Gäste-/Aufenthaltsdaten (nur GET = lesen).
-# Es werden Entity- und Browse-Namen probiert.
+# Kandidaten für lesbare Ressourcen (nur GET). Zuerst eigene Objekte des
+# Vermieters (zur Bestätigung der Autorisierung), dann Gäste/Aufenthalte.
 GUEST_RESOURCES = [
+    # Objekte / Vermieter (sollten für den Obveznik lesbar sein):
+    "FacilityBrowse", "Facility", "TTPayerUnion", "TTPayer",
+    # Gäste / Check-in / Aufenthalte:
     "TouristCheckIn", "TouristCheckInBrowse", "CheckedInTourist",
+    "CheckedInTouristBrowse", "ActiveTourist", "ActiveTouristBrowse",
     "Tourist", "TouristBrowse", "TouristStay", "TouristStayBrowse",
-    "TouristReport", "TouristReportBrowse", "GuestBook", "GuestBookBrowse",
-    "CheckInBrowse", "TouristCheckInReport", "ActiveTourist",
-    "TouristTrafficBrowse", "TouristTraffic", "Boravak", "PopisTurista",
-    "EvidencijaGostiju", "TTCalculationItemSourceByTourist",
+    "TouristReport", "TouristReportBrowse", "TouristCheckInReport",
+    "TouristCheckInReportBrowse", "CheckInBrowse", "GuestBook", "GuestBookBrowse",
+    "TouristTraffic", "TouristTrafficBrowse", "EvidencijaTurista",
+    "PopisTurista", "Boravak",
+    # Übernachtungsberechnung (nur lesen; keine Aktion auslösen):
+    "TTCalculationItemSourceByTourist", "TTCalculationItemSourceByFacility",
 ]
 
 FORBIDDEN_GET = ("save", "import", "create", "update", "delete", "insert")
@@ -167,10 +173,9 @@ def main():
             print("  %-18s Fehler: %s" % (tag, resp))
             continue
         cookies = [c.name for c in (cj or [])]
-        auth = [c for c in cookies if "auth" in c.lower()]
         success = (code == 200 and resp.lower() == "true")
-        print("  %-18s HTTP %s Body=%-6s Cookie=%s %s"
-              % (tag, code, resp[:6] or "-", ",".join(auth) or "-", "✅" if success else ""))
+        print("  %-18s HTTP %s Body=%-6s Cookies=%s %s"
+              % (tag, code, resp[:6] or "-", ",".join(cookies) or "-", "✅" if success else ""))
         if not success and resp and resp.lower() != "false":
             print("       Antwort: %s" % resp[:180])
         if success and session is None:
@@ -184,51 +189,56 @@ def main():
     base, op = session
     print("\n✅ Angemeldet an: %s" % base)
 
-    # 2) Auth-Kontrolle + Bestätigung des {Records:[]}-Formats
-    print("\n--- 2) Auth-Kontrolle: Htz/Country ---")
-    code, raw = get(op, base, "/Rest/Htz/Country/?page=1&psize=1")
-    recs = records_of(raw)
-    if code == 200 and recs is not None:
-        print("  200 ✅ authentifiziert, Format {Records:[...]} bestätigt")
-    else:
-        print("  HTTP %s – %s" % (code, (raw or "")[:160]))
-        print("  (Wenn 401: Cookie-Handling; bitte Ausgabe schicken.)")
-        return
-
-    # 3) Gäste-/Aufenthalts-Ressource suchen + Feldnamen anzeigen
-    print("\n--- 3) Ressourcen mit Gäste-/Aufenthaltsdaten suchen ---")
+    # 2) Ressourcen probieren:
+    #    200      = lesbar (Treffer, Felder anzeigen)
+    #    400/401  = Ressource existiert, aber nicht berechtigt
+    #    404      = Ressource gibt es nicht (unter diesem Namen)
+    print("\n--- 2) Lesbare Ressourcen suchen ---")
+    print("  (200 = lesbar ✅ | 'not authorized' = existiert, keine Berechtigung | 404 = kein solcher Name)")
     hits = []
     for name in GUEST_RESOURCES:
         code, raw = get(op, base, "/Rest/Htz/%s/?page=1&psize=1" % name)
-        if code != 200:
-            if code not in (404, None):
-                print("  %-4s   %s  %s" % (code, name, (raw or "")[:60]))
-            continue
-        recs = records_of(raw)
-        if recs is None:
-            print("  200 ?  %-28s (kein Records-Format)" % name)
-            continue
-        fields = sorted(recs[0].keys()) if recs else []
-        date_fields = [f for f in fields if re.search(r'date|datum|dolask|odlask|checkin|checkout|arriv|depart', f, re.I)]
-        print("  200 ✅ %-28s Felder: %d %s"
-              % (name, len(fields), ("| Datumsfelder: " + ", ".join(date_fields)) if date_fields else ""))
-        if fields:
-            print("        alle Felder: %s" % ", ".join(fields))
-        hits.append((name, fields, date_fields, recs))
+        low = (raw or "").lower()
+        if code == 200:
+            recs = records_of(raw)
+            if recs is None:
+                print("  200 ?  %-30s (unerwartetes Format: %s)" % (name, (raw or "")[:60]))
+                continue
+            fields = sorted(recs[0].keys()) if recs else []
+            date_fields = [f for f in fields if re.search(
+                r'date|datum|dolask|odlask|checkin|checkout|arriv|depart', f, re.I)]
+            print("  200 ✅ %-30s Felder=%d %s" % (
+                name, len(fields),
+                ("| Datum: " + ", ".join(date_fields)) if date_fields else
+                ("(0 Datensätze auf Seite 1)" if not fields else "")))
+            if fields:
+                print("        Felder: %s" % ", ".join(fields))
+            hits.append((name, fields, date_fields, recs))
+        elif "not authorized" in low or code in (401, 403):
+            print("  🔒     %-30s existiert, aber keine Leseberechtigung" % name)
+        elif code == 404:
+            pass  # gibt's nicht – still
+        else:
+            print("  %-4s   %-30s %s" % (code, name, (raw or "")[:70]))
 
     print("\n--- Zusammenfassung ---")
     if hits:
-        best = next((h for h in hits if h[2]), hits[0])
-        print("Passende Ressource(n): %s" % ", ".join(h[0] for h in hits))
-        print("Beste Wahl: %s" % best[0])
-        if best[3]:
+        withdate = [h for h in hits if h[2]]
+        print("Lesbare Ressourcen: %s" % ", ".join(h[0] for h in hits))
+        if withdate:
+            best = withdate[0]
+            print("Mit Check-in/Check-out-Feldern: %s" % ", ".join(h[0] for h in withdate))
             print("\n--- Beispiel-Datensatz von %s ---" % best[0])
-            print(json.dumps(best[3][0], ensure_ascii=False, indent=1)[:1800])
+            if best[3]:
+                print(json.dumps(best[3][0], ensure_ascii=False, indent=1)[:1800])
+        else:
+            print("Noch keine mit Datumsfeldern gefunden – evtl. 0 Gäste im Jahr oder")
+            print("anderer Ressourcenname. Bitte Wiki-Abschnitt 'Resursi' ansehen.")
     else:
-        print("Login+Auth OK, aber keine geratene Ressource passte.")
-        print("Bitte in der Wiki unter 'Resursi' nach Tourist/CheckIn/Turist suchen")
-        print("und mir den Namen + die Atributi (Felder) nennen.")
-    print("\nBitte komplette Ausgabe schicken – dann ist die App fertig konfigurierbar.")
+        print("Keine der geratenen Ressourcen war lesbar.")
+        print("Bitte in der Wiki (direkt nach deinem Zitat) unter 'Resursi' die Liste")
+        print("ansehen und mir Namen + 'Atributi' der Tourist-/CheckIn-Ressource nennen.")
+    print("\nBitte komplette Ausgabe schicken.")
 
 
 if __name__ == "__main__":
