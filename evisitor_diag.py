@@ -145,7 +145,7 @@ def main():
     except Exception:
         pass
     print("=" * 68)
-    print(" eVisitor Diagnose v7 – Produktion (NUR LESEN)")
+    print(" eVisitor Diagnose v8 – Ressourcensuche (NUR LESEN)")
     print("=" * 68)
     print("TLS: %s" % ssl.OPENSSL_VERSION)
 
