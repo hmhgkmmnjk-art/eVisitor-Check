@@ -62,9 +62,11 @@ FIRSTNAME_FIELDS = ["Ime", "ime", "FirstName", "firstName", "ImeGosta", "imeGost
 LASTNAME_FIELDS = ["Prezime", "prezime", "LastName", "lastName", "PrezimeGosta", "prezimeGosta"]
 NAME_FIELDS = ["ImePrezime", "imePrezime", "Naziv", "naziv", "Name", "name", "PunoIme"]
 
-# SICHERHEIT: Nur GET + der EINE Login-POST sind erlaubt. Alles andere blockiert.
-FORBIDDEN = ("checkin", "checkout", "prijav", "odjav", "save", "import",
-             "new", "create", "update", "delete", "insert", "add")
+# SICHERHEIT: Nur GET (reines Lesen) + der EINE Login-POST sind erlaubt.
+# Datenänderungen sind in dieser API ausschließlich über POST-Aktionen/PUT/
+# DELETE möglich – all das wird blockiert. Die Gäste-DATEN-Ressourcen heißen
+# teils "CheckIn"/"Prijava" – lesende GETs darauf sind harmlos und erlaubt.
+FORBIDDEN = ("save", "import", "create", "update", "delete", "insert")
 
 HTTP_TIMEOUT = 20   # zügiges Timeout, damit die Abfrage bei falscher Adresse nicht hängt
 
@@ -207,12 +209,14 @@ def do(opener, req):
 
 def make_ssl_context():
     """Akzeptiert den veralteten schwachen DH-Schlüssel von evisitor.hr
-    (SECLEVEL=1). Zertifikatsprüfung bleibt aktiv (außer bei --insecure)."""
+    (SECLEVEL=0). Zertifikatsprüfung bleibt aktiv (außer bei --insecure)."""
     ctx = ssl.create_default_context()
-    try:
-        ctx.set_ciphers("DEFAULT@SECLEVEL=1")
-    except ssl.SSLError:
-        pass
+    for spec in ("DEFAULT@SECLEVEL=0", "ALL@SECLEVEL=0"):
+        try:
+            ctx.set_ciphers(spec)
+            break
+        except ssl.SSLError:
+            continue
     if INSECURE:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -230,13 +234,17 @@ def make_opener():
 
 
 def api_login(opener, username, password):
-    body = json.dumps({"userName": username, "password": password,
-                       "rememberMe": False}).encode("utf-8")
+    # Rhetos/AspNetFormsAuth erwartet exakt diese Feldnamen (Großschreibung!)
+    # und antwortet mit HTTP 200 + Body "true" (Erfolg) bzw. "false" (abgelehnt).
+    body = json.dumps({"UserName": username, "Password": password,
+                       "PersistCookie": False}).encode("utf-8")
     req = urllib.request.Request(API_ROOT + LOGIN_PATH, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
         with do(opener, req) as resp:
-            resp.read()
+            answer = resp.read(100).decode("utf-8", "replace").strip().lower()
+        if answer != "true":
+            raise RuntimeError("Login fehlgeschlagen (Benutzername/Passwort falsch).")
         return True
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
