@@ -1,34 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-eVisitor Diagnose (NUR LESEN – read-only)  v3
-=============================================
+eVisitor Diagnose (NUR LESEN – read-only)  v4  – Auth-Introspektion
+===================================================================
 
-Findet heraus, welche API-Basisadresse mit deinem Login funktioniert und
-welcher Endpunkt die Gäste-/Übernachtungsdaten liefert. Ändert NICHTS.
+Der Login liefert 200, aber Folgeaufrufe kommen als 401 zurück. Diese
+Version legt offen, WAS der Login zurückgibt (Set-Cookie / Body / Token)
+und was die geschützte Ressource antwortet (inkl. WWW-Authenticate), damit
+die richtige Authentifizierung für die Folgeaufrufe gefunden werden kann.
 
-Behandelt den veralteten, zu schwachen TLS-Schlüssel (DH_KEY_TOO_SMALL) von
-evisitor.hr auf zwei Wegen:
-  1) Python-TLS mit gesenkter Sicherheitsstufe (SECLEVEL=0)
-  2) automatischer Rückfall auf das externe Programm `curl`
+SICHERHEIT: nur GET plus GENAU EIN Login-POST. Kein Schreiben.
 
-SICHERHEIT: nur GET-Abfragen plus GENAU EIN Login-POST. Kein Schreiben,
-keine Gäste-Anmeldung. Es werden nur Substantiv-Ressourcen gelesen.
-
-Nutzung in a-Shell:
+Nutzung:
     cd Documents
     curl -L -o evisitor_diag.py "https://raw.githubusercontent.com/hmhgkmmnjk-art/eVisitor-Check/claude/evisitor-overnight-stays-74xv0o/evisitor_diag.py"
     python3 evisitor_diag.py 57344933760 DEINPASSWORT
-Die komplette Ausgabe bitte kopieren und mir schicken.
+Komplette Ausgabe bitte kopieren und schicken. (Cookie-WERTE sind
+geschwärzt – nur Namen werden gezeigt.)
 """
 
 import sys
-import os
 import json
 import ssl
-import shutil
-import tempfile
-import subprocess
 import datetime as dt
 import urllib.request
 import urllib.error
@@ -37,38 +30,30 @@ import http.cookiejar
 
 LOGIN_PATH = "/Resources/AspNetFormsAuth/Authentication/Login"
 
+# testApi hat sich als funktionierend erwiesen; Produktion zusätzlich mittesten.
 CANDIDATE_BASES = [
-    "https://www.evisitor.hr/eVisitorApi",
     "https://www.evisitor.hr/testApi",
+    "https://www.evisitor.hr/eVisitorApi",
     "https://www.evisitor.hr/api",
+    "https://www.evisitor.hr/webApi",
 ]
 
-CANDIDATE_RESOURCES = [
+# Discovery-Pfade (nur lesen) – Country ist das dokumentierte Beispiel.
+PROBE_PATHS = [
     "/Rest/Htz/Country/",
-    "/Rest/Htz/",
-    "/Rest/Htz/EvidencijaGostiju/",
-    "/Rest/Htz/EvidencijaGostiju",
-    "/Rest/Htz/Turist/",
-    "/Rest/Htz/Turisti/",
-    "/Rest/Htz/Gost/",
-    "/Rest/Htz/Gosti/",
-    "/Rest/Htz/Boravak/",
-    "/Rest/Htz/Nocenje/",
-    "/Rest/Htz/Nocenja/",
-    "/Rest/Htz/TuristickiPromet/",
-    "/Rest/Htz/Promet/",
+    "/Rest/Htz/Country",
+    "/Rest/Htz",
+    "/Rest",
+    "/",
+    "/$metadata",
+    "/Rest/$metadata",
 ]
 
 FORBIDDEN = ("checkin", "checkout", "prijav", "odjav", "save", "import",
              "new", "create", "update", "delete", "insert", "add")
-
 TIMEOUT = 20
-CURL = shutil.which("curl") or ("curl" if os.path.exists("/usr/bin/curl") else None)
 
 
-# ---------------------------------------------------------------------------
-# Sicherheitssperre
-# ---------------------------------------------------------------------------
 def assert_read_only(method, url):
     m = method.upper()
     low = urllib.parse.urlparse(url).path.rstrip("/").lower()
@@ -82,9 +67,6 @@ def assert_read_only(method, url):
     raise RuntimeError("SICHERHEIT: nicht-lesender Zugriff blockiert (%s)." % m)
 
 
-# ---------------------------------------------------------------------------
-# Backend 1: Python-TLS (SECLEVEL=0)
-# ---------------------------------------------------------------------------
 def make_ssl_context():
     ctx = ssl.create_default_context()
     for spec in ("DEFAULT@SECLEVEL=0", "ALL@SECLEVEL=0"):
@@ -96,104 +78,62 @@ def make_ssl_context():
     return ctx
 
 
-def py_opener():
+def new_session():
     cj = http.cookiejar.CookieJar()
     https = urllib.request.HTTPSHandler(context=make_ssl_context())
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj), https)
-    op.addheaders = [("User-Agent", "eVisitor-Diag/3 (read-only)"),
+    op.addheaders = [("User-Agent", "eVisitor-Diag/4 (read-only)"),
                      ("Accept", "application/json, text/plain, */*")]
-    return op
+    return op, cj
 
 
-def py_login(base, user, pw):
+def redact_headers(headers):
+    """Header anzeigen, Cookie-/Token-WERTE aber schwärzen."""
+    out = []
+    for k, v in headers.items():
+        kl = k.lower()
+        if kl in ("set-cookie", "authorization"):
+            # nur den Namen vor '=' zeigen
+            name = v.split("=", 1)[0].split(";")[0]
+            out.append("%s: %s=<geschwärzt>" % (k, name))
+        else:
+            out.append("%s: %s" % (k, v))
+    return out
+
+
+def body_snip(raw, n=500):
+    if not raw:
+        return "(leer)"
+    s = raw.strip().replace("\r", "")
+    return s[:n] + (" …" if len(s) > n else "")
+
+
+def login(op, base, user, pw):
     url = base + LOGIN_PATH
     assert_read_only("POST", url)
     body = json.dumps({"userName": user, "password": pw, "rememberMe": False}).encode()
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    op = py_opener()
     try:
         with op.open(req, timeout=TIMEOUT) as r:
-            r.read()
-        return op, 200, ""
+            return r.status, dict(r.headers.items()), r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return op, e.code, ""
+        return e.code, dict(e.headers.items()), e.read().decode("utf-8", "replace")
     except Exception as e:
-        return None, None, str(e)
+        return None, {}, str(e)
 
 
-def py_get(op, base, path):
+def get(op, base, path):
     url = base + path
     assert_read_only("GET", url)
     req = urllib.request.Request(url, method="GET")
     try:
         with op.open(req, timeout=TIMEOUT) as r:
-            return r.status, r.read().decode("utf-8", "replace")
+            return r.status, dict(r.headers.items()), r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return e.code, ""
+        return e.code, dict(e.headers.items()), e.read().decode("utf-8", "replace")
     except Exception as e:
-        return None, str(e)
-
-
-# ---------------------------------------------------------------------------
-# Backend 2: curl (eigene TLS-Bibliothek, verträgt den alten Server oft)
-# ---------------------------------------------------------------------------
-def curl_run(method, url, cookie_file, data=None):
-    assert_read_only(method, url)
-    marker = "\n__HTTP__%{http_code}"
-    base_cmd = [CURL, "-sS", "-m", str(TIMEOUT), "-w", marker,
-                "-c", cookie_file, "-b", cookie_file]
-    if method == "POST":
-        base_cmd += ["-X", "POST", "-H", "Content-Type: application/json", "-d", data or "{}"]
-    # Erst mit erlaubtem schwachem DH, dann notfalls ohne die Option:
-    for extra in (["--ciphers", "DEFAULT@SECLEVEL=0"], []):
-        try:
-            out = subprocess.run(base_cmd + extra + [url],
-                                 capture_output=True, text=True, timeout=TIMEOUT + 5)
-        except Exception as e:
-            return None, "", str(e)
-        stdout, _, code = out.stdout.rpartition("__HTTP__")
-        code = code.strip()
-        if code and code != "000":
-            return int(code), stdout, ""
-        # wenn die --ciphers-Option nicht unterstützt wird, ohne sie erneut versuchen
-        if "option" in (out.stderr or "").lower() and extra:
-            continue
-        return (None, "", (out.stderr or "").strip())
-    return None, "", "curl: kein HTTP-Code"
-
-
-def curl_login(base, user, pw, cookie_file):
-    data = json.dumps({"userName": user, "password": pw, "rememberMe": False})
-    return curl_run("POST", base + LOGIN_PATH, cookie_file, data)
-
-
-def curl_get(base, path, cookie_file):
-    return curl_run("GET", base + path, cookie_file)
-
-
-# ---------------------------------------------------------------------------
-# Ablauf
-# ---------------------------------------------------------------------------
-def resource_url(res, df, dtx):
-    if res in ("/Rest/Htz/Country/", "/Rest/Htz/"):
-        return res
-    return res + "?datumOd=%s&datumDo=%s" % (df, dtx)
-
-
-def summarize(found):
-    print("\n--- Zusammenfassung ---")
-    if found:
-        print("Diese Ressourcen liefern Daten (200) – bitte 'Beispiel:'-Zeilen schicken.")
-        for res, raw in found:
-            if res not in ("/Rest/Htz/Country/", "/Rest/Htz/"):
-                print("\n--- Vollausschnitt %s (erste 1500 Zeichen) ---" % res)
-                print((raw or "")[:1500])
-                break
-    else:
-        print("Login OK, aber keine geratene Gäste-Ressource passte.")
-        print("Bitte in der eingeloggten Web-API-Wiki den Htz-Ressourcennamen")
-        print("für Gäste/Übernachtungen nachsehen und mir nennen.")
+        return None, {}, str(e)
 
 
 def main():
@@ -201,101 +141,70 @@ def main():
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
-
-    print("=" * 62)
-    print(" eVisitor Diagnose v3 – NUR LESEN (ändert nichts)")
-    print("=" * 62)
-    print("TLS-Bibliothek (Python): %s" % ssl.OPENSSL_VERSION)
-    print("curl verfügbar: %s" % ("ja (" + CURL + ")" if CURL else "NEIN"))
+    print("=" * 64)
+    print(" eVisitor Diagnose v4 – Auth-Introspektion (NUR LESEN)")
+    print("=" * 64)
+    print("TLS: %s" % ssl.OPENSSL_VERSION)
 
     if len(sys.argv) >= 3:
         user, pw = sys.argv[1].strip(), sys.argv[2]
-        print("Benutzername: %s (aus Aufruf übernommen)" % user)
+        print("Benutzername: %s" % user)
     else:
-        print("Tipp: python3 evisitor_diag.py BENUTZER PASSWORT")
         user = input("Benutzername: ").strip()
         pw = input("Passwort (sichtbar): ").strip()
     if not user or not pw:
-        print("Abbruch: Benutzername und Passwort nötig.")
+        print("Abbruch: Zugangsdaten nötig.")
         return
 
-    today = dt.date.today()
-    df = dt.date(today.year, 1, 1).isoformat()
-    dtx = today.isoformat()
-
-    # ---- Versuch 1: Python-TLS (SECLEVEL=0) ----
-    print("\n--- Versuch 1: Python-TLS (SECLEVEL=0) ---")
-    working = None      # (base, backend, handle)
-    ssl_problem = False
+    # 1) Basis finden, die den Login mit 200 annimmt
+    print("\n--- 1) Login je Basis ---")
+    chosen = None
     for base in CANDIDATE_BASES:
+        op, cj = new_session()
+        code, hdrs, raw = login(op, base, user, pw)
         tag = base.split("/")[-1]
-        op, code, err = py_login(base, user, pw)
         if code == 200:
-            print("  %-14s Login -> 200  ✅ LOGIN OK (Python)" % tag)
-            working = (base, "py", op)
-            break
+            print("  %-14s -> 200 ✅" % tag)
+            if chosen is None:
+                chosen = (base, op, cj, hdrs, raw)
         elif code in (400, 401, 403):
-            print("  %-14s Login -> %d (Endpunkt existiert, Login abgelehnt)" % (tag, code))
+            print("  %-14s -> %d (existiert, Login abgelehnt)" % (tag, code))
         elif code == 404:
-            print("  %-14s Login -> 404 (Adresse falsch)" % tag)
+            print("  %-14s -> 404" % tag)
         else:
-            print("  %-14s Fehler: %s" % (tag, err))
-            if err and ("SSL" in err or "DH_KEY" in err or "dh key" in err):
-                ssl_problem = True
+            print("  %-14s -> Fehler: %s" % (tag, str(raw)[:120]))
 
-    # ---- Versuch 2: curl-Rückfall, falls Python an TLS scheitert ----
-    cookie_file = os.path.join(tempfile.gettempdir(), "evisitor_diag_cookies.txt")
-    if not working and CURL:
-        print("\n--- Versuch 2: Rückfall auf curl ---")
-        for base in CANDIDATE_BASES:
-            tag = base.split("/")[-1]
-            try:
-                if os.path.exists(cookie_file):
-                    os.remove(cookie_file)
-            except Exception:
-                pass
-            code, body, err = curl_login(base, user, pw, cookie_file)
-            if code == 200:
-                print("  %-14s Login -> 200  ✅ LOGIN OK (curl)" % tag)
-                working = (base, "curl", cookie_file)
-                break
-            elif code in (400, 401, 403):
-                print("  %-14s Login -> %d (Endpunkt existiert, Login abgelehnt)" % (tag, code))
-            elif code == 404:
-                print("  %-14s Login -> 404 (Adresse falsch)" % tag)
-            else:
-                print("  %-14s curl-Fehler: %s" % (tag, err[:160]))
-
-    if not working:
-        print("\nKein Login erfolgreich.")
-        if ssl_problem and not CURL:
-            print("Ursache: TLS (schwacher DH-Schlüssel) UND kein curl gefunden.")
-        print("Bitte die komplette Ausgabe oben schicken.")
+    if not chosen:
+        print("\nKein Login mit 200. Ausgabe bitte schicken.")
         return
 
-    base, backend, handle = working
-    print("\nFunktionierende Basis: %s   (Backend: %s)" % (base, backend))
-    print("\n--- Lesende Ressourcen testen (GET) ---")
-    found = []
-    for res in CANDIDATE_RESOURCES:
-        url = resource_url(res, df, dtx)
-        if backend == "py":
-            code, raw = py_get(handle, base, url)
-        else:
-            code, raw, _ = curl_get(base, url, handle)
-        sample = (raw[:160].replace("\n", " ")) if isinstance(raw, str) else ""
-        if code == 200:
-            print("  200 ✅  %s" % res)
-            print("        Beispiel: %s" % sample)
-            found.append((res, raw))
-        elif code in (401, 403):
-            print("  %d 🔒  %s" % (code, res))
-        elif code == 404:
-            print("  404     %s" % res)
-        else:
-            print("  %-4s    %s  %s" % (code, res, sample[:60]))
+    base, op, cj, login_hdrs, login_body = chosen
+    print("\n--- 2) Login-Antwort von %s ---" % base)
+    print("Response-Header:")
+    for line in redact_headers(login_hdrs):
+        print("   " + line)
+    print("Body (Auszug): %s" % body_snip(login_body, 400))
+    cookie_names = [c.name for c in cj]
+    print("Gesetzte Cookies (Namen): %s" % (", ".join(cookie_names) or "KEINE ⚠️"))
 
-    summarize(found)
+    # 3) Geschützte Ressource + Discovery abfragen (mit derselben Sitzung)
+    print("\n--- 3) Lese-Discovery (gleiche Sitzung) ---")
+    for path in PROBE_PATHS:
+        code, hdrs, raw = get(op, base, path)
+        line = "  %-4s  %s" % (code, path)
+        www = hdrs.get("WWW-Authenticate") or hdrs.get("www-authenticate")
+        ctype = hdrs.get("Content-Type") or hdrs.get("content-type") or ""
+        print(line + ("   [%s]" % ctype.split(";")[0] if ctype else ""))
+        if www:
+            print("        WWW-Authenticate: %s" % www)
+        if code == 200 and raw:
+            print("        Body: %s" % body_snip(raw, 300))
+        elif code not in (404,) and raw:
+            print("        Body: %s" % body_snip(raw, 200))
+
+    print("\n--- Fertig. Bitte komplette Ausgabe schicken. ---")
+    print("Wichtig für mich: welche Cookies der Login setzt und ob /Rest/Htz/Country/")
+    print("mit dieser Sitzung 200 oder 401 liefert.")
 
 
 if __name__ == "__main__":
