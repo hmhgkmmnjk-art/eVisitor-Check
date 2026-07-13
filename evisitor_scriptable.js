@@ -510,17 +510,48 @@ async function main() {
   }
 }
 
+// ------------------------- Homescreen-Widget -------------------------------
+// Als Scriptable-Widget auf dem Homescreen: zeigt eine Kachel; "Beim
+// Interagieren: Skript ausführen" öffnet die App und startet die Abfrage.
+function buildWidget(lang) {
+  const T = I18N[lang] || I18N.de;
+  const w = new ListWidget();
+  const grad = new LinearGradient();
+  grad.colors = [new Color("#2563eb"), new Color("#1d4ed8")];
+  grad.locations = [0, 1];
+  w.backgroundGradient = grad;
+  const t1 = w.addText("🌙 eVisitor");
+  t1.textColor = Color.white();
+  t1.font = Font.boldSystemFont(18);
+  w.addSpacer(4);
+  const t2 = w.addText(lang === "hr" ? "Noćenja" : "Übernachtungen");
+  t2.textColor = new Color("#ffffff", 0.9);
+  t2.font = Font.systemFont(14);
+  w.addSpacer();
+  const t3 = w.addText(lang === "hr" ? "Dodirni za dohvat" : "Antippen zum Abfragen");
+  t3.textColor = new Color("#ffffff", 0.7);
+  t3.font = Font.systemFont(11);
+  return w;
+}
+
 // --------------------------- Start / Test-Export ---------------------------
 if (typeof Alert !== "undefined") {
   // Läuft in Scriptable
-  main()
-    .catch(async (e) => {
-      const a = new Alert();
-      a.message = String(e && (e.message || e));
-      a.addCancelAction("OK");
-      await a.present();
-    })
-    .then(() => { if (typeof Script !== "undefined") Script.complete(); });
+  if (typeof config !== "undefined" && config.runsInWidget) {
+    let lang = "de";
+    try { if (Keychain.contains(KC_LANG)) lang = Keychain.get(KC_LANG); } catch (e) {}
+    Script.setWidget(buildWidget(lang));
+    Script.complete();
+  } else {
+    main()
+      .catch(async (e) => {
+        const a = new Alert();
+        a.message = String(e && (e.message || e));
+        a.addCancelAction("OK");
+        await a.present();
+      })
+      .then(() => { if (typeof Script !== "undefined") Script.complete(); });
+  }
 } else if (typeof module !== "undefined") {
   // Node (nur für Tests der reinen Logik)
   module.exports = { assertReadOnly, parseNetDate, isoOfDay, dayOf,

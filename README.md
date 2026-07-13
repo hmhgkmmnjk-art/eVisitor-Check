@@ -98,6 +98,22 @@ es in der Proxy-Oberfläche und in der Scriptable-Version.
 iOS übernimmt hier Netzwerk, Cookies und TLS nativ – deshalb sind weder
 CORS-Tricks noch ein lokaler Server nötig.
 
+### Auf dem Homescreen (ohne Safari)
+
+Scriptables eigene Funktion „Add to Home Screen" legt ein Safari-Lesezeichen an,
+das neuere iOS-Versionen blockieren („Verwendung des eingeschränkten
+Netzwerkanschlusses nicht erlaubt"). Zwei Wege, die **ohne Safari** funktionieren:
+
+- **Kurzbefehle-App (sofort, ohne Skriptänderung):** Kurzbefehle öffnen → neuer
+  Kurzbefehl → Aktion **„Skript ausführen"** (Scriptable) → Skript
+  *evisitor_scriptable* wählen → oben Teilen → **„Zum Home-Bildschirm"**.
+  Das Symbol startet dann direkt die Abfrage.
+- **Scriptable-Widget:** Homescreen lange drücken → **+** → **Scriptable** →
+  Widget platzieren → Widget antippen und *evisitor_scriptable* als Skript
+  wählen (bei „When Interacting: Run Script"). Ein Tipp auf die Kachel öffnet
+  die App und startet die Abfrage. Das Skript bringt dafür ein eigenes
+  Kachel-Design mit.
+
 ---
 
 ## Variante A – HTML-Oberfläche mit lokalem Proxy (empfohlen)
