@@ -53,6 +53,9 @@ ARRIVAL_FIELD = "TimeStayFrom"         # Anreise-Zeitpunkt (Filterfeld)
 # Aufenthalte, die vor dem Zeitraum begannen und hineinragen, werden über
 # ein Vorlauf-Fenster mitgeholt und clientseitig auf den Zeitraum zugeschnitten:
 REPORT_LOOKBACK_DAYS = 370
+# Für "aktuell angemeldet" wird separat bis HEUTE abgefragt (unabhängig vom
+# gewählten Zeitraum), mit großzügigem Rückblick für Langzeitgäste:
+CURRENT_LOOKBACK_DAYS = 730
 
 CHECKIN_FIELDS = ["TimeStayFrom", "StayFrom", "DatumDolaska"]
 CHECKOUT_FIELDS = ["CheckOutTime", "CheckOutDate", "DatumOdlaska"]
@@ -155,7 +158,6 @@ def compute_account(records, date_from, date_to, today):
     total_nights = open_nights = guests = open_guests = 0
     monthly = defaultdict(int)
     guest_list = []
-    current_guests = []
     for rec in records:
         if not isinstance(rec, dict):
             continue
@@ -164,9 +166,6 @@ def compute_account(records, date_from, date_to, today):
         if ci is None:
             continue
         is_open = co is None
-        # Aktuell angemeldet = offen, Anreise bis heute (auch 0 Nächte)
-        if is_open and ci <= today:
-            current_guests.append({"name": guest_name(rec), "checkin": ci.isoformat()})
         checkout_excl = min(today, range_end_excl) if is_open else min(co, range_end_excl)
         start = max(ci, range_start)
         if checkout_excl <= start:
@@ -189,14 +188,29 @@ def compute_account(records, date_from, date_to, today):
             "open": is_open,
         })
     guest_list.sort(key=lambda g: g["checkin"])
-    current_guests.sort(key=lambda g: g["checkin"])
     monthly_json = {"%04d-%02d" % (y, m): n for (y, m), n in monthly.items()}
     return {
         "total_nights": total_nights, "open_nights": open_nights,
         "guests": guests, "open_guests": open_guests,
         "monthly": monthly_json, "records": len(records),
-        "guest_list": guest_list, "current_guests": current_guests,
+        "guest_list": guest_list, "current_guests": [],
     }
+
+
+def current_guests_of(records, today):
+    """Aktuell angemeldet = offener Aufenthalt (kein CheckOut), Anreise <= heute.
+    Unabhängig vom gewählten Report-Zeitraum."""
+    out = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        ci = parse_date(first_field(rec, CHECKIN_FIELDS))
+        co = parse_date(first_field(rec, CHECKOUT_FIELDS))
+        if ci is None or co is not None or ci > today:
+            continue
+        out.append({"name": guest_name(rec), "checkin": ci.isoformat()})
+    out.sort(key=lambda g: g["checkin"])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -287,12 +301,10 @@ def extract_records(payload):
     return []
 
 
-def fetch_records(opener, date_from, date_to):
-    """Holt die Tourist-Anmeldungen im (erweiterten) Zeitraum, seitenweise.
-    Gefiltert wird über den Anreise-Zeitpunkt; ein Vorlauf-Fenster fängt
-    Aufenthalte ab, die vor dem Zeitraum begannen und hineinragen."""
-    lo = (date_from - dt.timedelta(days=REPORT_LOOKBACK_DAYS)).isoformat() + "T00:00:00"
-    hi = date_to.isoformat() + "T23:59:59"
+def fetch_tourist(opener, arr_from, arr_to):
+    """Holt Tourist-Anmeldungen mit Anreise in [arr_from, arr_to], seitenweise."""
+    lo = arr_from.isoformat() + "T00:00:00"
+    hi = arr_to.isoformat() + "T23:59:59"
     filters = [
         {"Property": ARRIVAL_FIELD, "Operation": "greaterequal", "Value": lo},
         {"Property": ARRIVAL_FIELD, "Operation": "lessequal", "Value": hi},
@@ -325,11 +337,23 @@ def fetch_records(opener, date_from, date_to):
     return all_records
 
 
+def fetch_records(opener, date_from, date_to):
+    """Report-Datensätze für den Zeitraum (mit Vorlauf für hineinragende Aufenthalte)."""
+    return fetch_tourist(opener, date_from - dt.timedelta(days=REPORT_LOOKBACK_DAYS), date_to)
+
+
 def run_account(username, password, date_from, date_to, today):
     opener = make_opener()
     api_login(opener, username, password)
     records = fetch_records(opener, date_from, date_to)
-    return compute_account(records, date_from, date_to, today)
+    stats = compute_account(records, date_from, date_to, today)
+    # "Aktuell angemeldet" separat bis heute abfragen (unabhängig vom Zeitraum):
+    try:
+        cur = fetch_tourist(opener, today - dt.timedelta(days=CURRENT_LOOKBACK_DAYS), today)
+        stats["current_guests"] = current_guests_of(cur, today)
+    except RuntimeError:
+        stats["current_guests"] = []
+    return stats
 
 
 # ---------------------------------------------------------------------------

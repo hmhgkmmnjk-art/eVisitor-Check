@@ -27,6 +27,7 @@ const REPORT_PATH = "/Rest/Htz/Tourist/";
 const ARRIVAL_FIELD = "TimeStayFrom";     // Anreise (Filterfeld)
 const CHECKOUT_FIELD = "CheckOutTime";    // Abreise (leer = noch anwesend)
 const LOOKBACK_DAYS = 370;                // Vorlauf für hineinragende Aufenthalte
+const CURRENT_LOOKBACK_DAYS = 730;        // Rückblick für "aktuell angemeldet" (bis heute)
 const PSIZE = 500;
 const KC_USERS = "evisitor_usernames";
 const KC_PASS = "evisitor_passwords";     // nur wenn "Passwörter merken" EIN
@@ -170,7 +171,7 @@ function monthsBetween(startDay, endExclDay) {
 function computeAccount(records, fromDay, toDay, todayDay) {
   const rangeEndExcl = toDay + 1;
   let totalNights = 0, openNights = 0, guests = 0, openGuests = 0;
-  const monthly = {}, guestList = [], currentGuests = [];
+  const monthly = {}, guestList = [];
   for (const rec of records) {
     if (!rec || typeof rec !== "object") continue;
     const ci = parseNetDate(rec[ARRIVAL_FIELD] || rec.StayFrom);
@@ -178,8 +179,6 @@ function computeAccount(records, fromDay, toDay, todayDay) {
     if (ci === null) continue;
     const isOpen = (co === null);
     const name = [rec.TouristName, rec.TouristSurname].filter(Boolean).join(" ") || "—";
-    // Aktuell angemeldet = offener Aufenthalt, Anreise bis heute (auch 0 Nächte)
-    if (isOpen && ci <= todayDay) currentGuests.push({ name, checkin: isoOfDay(ci) });
     const checkoutExcl = isOpen ? Math.min(todayDay, rangeEndExcl)
                                 : Math.min(co, rangeEndExcl);
     const start = Math.max(ci, fromDay);
@@ -194,10 +193,25 @@ function computeAccount(records, fromDay, toDay, todayDay) {
                      checkout: isOpen ? null : isoOfDay(co), nights, open: isOpen });
   }
   guestList.sort((a, b) => a.checkin < b.checkin ? -1 : 1);
-  currentGuests.sort((a, b) => a.checkin < b.checkin ? -1 : 1);
   return { total_nights: totalNights, open_nights: openNights,
            guests, open_guests: openGuests, monthly,
-           guest_list: guestList, current_guests: currentGuests };
+           guest_list: guestList, current_guests: [] };
+}
+
+// Aktuell angemeldet = offen (kein CheckOut), Anreise <= heute – unabhängig
+// vom gewählten Report-Zeitraum.
+function currentGuestsOf(records, todayDay) {
+  const out = [];
+  for (const rec of records) {
+    if (!rec || typeof rec !== "object") continue;
+    const ci = parseNetDate(rec[ARRIVAL_FIELD] || rec.StayFrom);
+    const co = parseNetDate(rec[CHECKOUT_FIELD] || rec.CheckOutDate);
+    if (ci === null || co !== null || ci > todayDay) continue;
+    const name = [rec.TouristName, rec.TouristSurname].filter(Boolean).join(" ") || "—";
+    out.push({ name, checkin: isoOfDay(ci) });
+  }
+  out.sort((a, b) => a.checkin < b.checkin ? -1 : 1);
+  return out;
 }
 
 // ------------------------------- Netzwerk ---------------------------------
@@ -227,12 +241,12 @@ async function apiLogoutQuiet() {
   try { await http("POST", BASE + LOGOUT_PATH, {}); } catch (e) { /* egal */ }
 }
 
-async function fetchRecords(fromDay, toDay, T) {
+async function fetchTourist(arrFromDay, arrToDay, T) {
   const filters = [
     { Property: ARRIVAL_FIELD, Operation: "greaterequal",
-      Value: isoOfDay(fromDay - LOOKBACK_DAYS) + "T00:00:00" },
+      Value: isoOfDay(arrFromDay) + "T00:00:00" },
     { Property: ARRIVAL_FIELD, Operation: "lessequal",
-      Value: isoOfDay(toDay) + "T23:59:59" },
+      Value: isoOfDay(arrToDay) + "T23:59:59" },
   ];
   const fenc = encodeURIComponent(JSON.stringify(filters));
   const all = [];
@@ -250,6 +264,10 @@ async function fetchRecords(fromDay, toDay, T) {
     if (recs.length < PSIZE) break;
   }
   return all;
+}
+
+async function fetchRecords(fromDay, toDay, T) {
+  return fetchTourist(fromDay - LOOKBACK_DAYS, toDay, T);
 }
 
 // ------------------------------ Report (HTML) -----------------------------
@@ -521,8 +539,13 @@ async function main() {
       try {
         await apiLogin(acc.u, acc.p, T);
         const recs = await fetchRecords(fromDay, toDay, T);
-        results.push({ username: acc.u, ok: true,
-                       stats: computeAccount(recs, fromDay, toDay, todayDay) });
+        const stats = computeAccount(recs, fromDay, toDay, todayDay);
+        // "Aktuell angemeldet" separat bis heute (unabhängig vom Zeitraum):
+        try {
+          const curRecs = await fetchTourist(todayDay - CURRENT_LOOKBACK_DAYS, todayDay, T);
+          stats.current_guests = currentGuestsOf(curRecs, todayDay);
+        } catch (e2) { stats.current_guests = []; }
+        results.push({ username: acc.u, ok: true, stats });
       } catch (e) {
         results.push({ username: acc.u, ok: false, error: String(e.message || e) });
       } finally {
@@ -584,5 +607,6 @@ if (typeof Alert !== "undefined") {
 } else if (typeof module !== "undefined") {
   // Node (nur für Tests der reinen Logik)
   module.exports = { assertReadOnly, parseNetDate, isoOfDay, dayOf,
-                     monthsBetween, computeAccount, buildReport, I18N };
+                     monthsBetween, computeAccount, currentGuestsOf,
+                     buildReport, I18N };
 }
