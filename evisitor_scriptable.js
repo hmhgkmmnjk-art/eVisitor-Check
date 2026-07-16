@@ -58,6 +58,8 @@ const I18N = {
     perAccount: "Pro Account", thAccount: "Account", thNights: "Übernacht.",
     thOpen: "davon offen", thGuests: "Gäste", total: "GESAMT",
     perMonth: "Übernachtungen pro Monat", guestsInPeriod: "Angemeldete Gäste im Zeitraum",
+    currentTitle: "Aktuell angemeldete Gäste", since: "seit",
+    noneCurrent: "Aktuell niemand angemeldet.",
     thGuest: "Gast", thArrival: "Anreise", thDeparture: "Abreise", thNightsShort: "Nächte",
     open: "offen", guestsWord: "Gäste", nightsWord: "Nächte",
     noGuests: "Keine Gäste im Zeitraum.", noMonth: "Keine Monatsdaten im Zeitraum.",
@@ -88,6 +90,8 @@ const I18N = {
     perAccount: "Po računu", thAccount: "Račun", thNights: "Noćenja",
     thOpen: "otvoreno", thGuests: "Gosti", total: "UKUPNO",
     perMonth: "Noćenja po mjesecu", guestsInPeriod: "Prijavljeni gosti u razdoblju",
+    currentTitle: "Trenutačno prijavljeni gosti", since: "od",
+    noneCurrent: "Trenutačno nema prijavljenih gostiju.",
     thGuest: "Gost", thArrival: "Dolazak", thDeparture: "Odlazak", thNightsShort: "Noći",
     open: "otvoreno", guestsWord: "gostiju", nightsWord: "noći",
     noGuests: "Nema gostiju u razdoblju.", noMonth: "Nema mjesečnih podataka.",
@@ -166,13 +170,16 @@ function monthsBetween(startDay, endExclDay) {
 function computeAccount(records, fromDay, toDay, todayDay) {
   const rangeEndExcl = toDay + 1;
   let totalNights = 0, openNights = 0, guests = 0, openGuests = 0;
-  const monthly = {}, guestList = [];
+  const monthly = {}, guestList = [], currentGuests = [];
   for (const rec of records) {
     if (!rec || typeof rec !== "object") continue;
     const ci = parseNetDate(rec[ARRIVAL_FIELD] || rec.StayFrom);
     const co = parseNetDate(rec[CHECKOUT_FIELD] || rec.CheckOutDate);
     if (ci === null) continue;
     const isOpen = (co === null);
+    const name = [rec.TouristName, rec.TouristSurname].filter(Boolean).join(" ") || "—";
+    // Aktuell angemeldet = offener Aufenthalt, Anreise bis heute (auch 0 Nächte)
+    if (isOpen && ci <= todayDay) currentGuests.push({ name, checkin: isoOfDay(ci) });
     const checkoutExcl = isOpen ? Math.min(todayDay, rangeEndExcl)
                                 : Math.min(co, rangeEndExcl);
     const start = Math.max(ci, fromDay);
@@ -183,13 +190,14 @@ function computeAccount(records, fromDay, toDay, todayDay) {
     const mb = monthsBetween(start, checkoutExcl);
     for (const k in mb) monthly[k] = (monthly[k] || 0) + mb[k];
     if (isOpen) { openNights += nights; openGuests += 1; }
-    const name = [rec.TouristName, rec.TouristSurname].filter(Boolean).join(" ") || "—";
     guestList.push({ name, checkin: isoOfDay(ci),
                      checkout: isOpen ? null : isoOfDay(co), nights, open: isOpen });
   }
   guestList.sort((a, b) => a.checkin < b.checkin ? -1 : 1);
+  currentGuests.sort((a, b) => a.checkin < b.checkin ? -1 : 1);
   return { total_nights: totalNights, open_nights: openNights,
-           guests, open_guests: openGuests, monthly, guest_list: guestList };
+           guests, open_guests: openGuests, monthly,
+           guest_list: guestList, current_guests: currentGuests };
 }
 
 // ------------------------------- Netzwerk ---------------------------------
@@ -301,6 +309,21 @@ function buildReport(results, fromDay, toDay, lang) {
           T.thNightsShort + "</th></tr></thead><tbody>" + g + "</tbody></table></details>";
   }
 
+  // Aktuell angemeldete (anwesende) Gäste je Account
+  let cur = "";
+  for (const r of results) {
+    if (!r.ok) continue;
+    const list = r.stats.current_guests || [];
+    let items = "";
+    for (const x of list) {
+      items += "<li>" + esc(x.name) + ' <span class="note">(' + T.since + " " + x.checkin + ")</span></li>";
+    }
+    cur += '<div class="accblock"><div class="accname">' + esc(r.username) +
+           ' <span class="cbadge">' + list.length + "</span></div>" +
+           (items ? '<ul class="curlist">' + items + "</ul>"
+                  : '<p class="note">' + T.noneCurrent + "</p>") + "</div>";
+  }
+
   const now = new Date();
   const p = (n) => (n < 10 ? "0" : "") + n;
   const gen = p(now.getDate()) + "." + p(now.getMonth() + 1) + "." + now.getFullYear() +
@@ -343,6 +366,11 @@ summary .badge{font-weight:400;color:var(--muted);font-size:12px}
 .tagopen{background:rgba(37,99,235,.15);color:var(--accent2);border-radius:6px;
 padding:1px 6px;font-size:11px;font-weight:600}
 .note{font-size:12px;color:var(--muted)}
+.accblock{margin-bottom:10px}
+.accname{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
+.cbadge{background:var(--accent);color:#fff;border-radius:20px;padding:0 8px;font-size:12px;font-weight:700}
+.curlist{margin:6px 0 0;padding-left:20px}
+.curlist li{margin:3px 0;font-size:14px}
 footer{color:var(--muted);font-size:11px;text-align:center;margin-top:6px}
 </style></head><body><div class="wrap">
 <h1>${esc(T.title)}</h1>
@@ -352,6 +380,7 @@ footer{color:var(--muted);font-size:11px;text-align:center;margin-top:6px}
 <div class="kpi"><div class="n">${totO}</div><div class="l">${T.kpiOpen}</div></div>
 <div class="kpi"><div class="n">${totG}</div><div class="l">${T.kpiGuests}</div></div>
 </div></div>
+<div class="card"><h2>${T.currentTitle}</h2>${cur || '<p class="note">' + T.noneCurrent + "</p>"}</div>
 <div class="card"><h2>${T.perAccount}</h2><table><thead><tr>
 <th>${T.thAccount}</th><th style="text-align:right">${T.thNights}</th>
 <th style="text-align:right">${T.thOpen}</th><th style="text-align:right">${T.thGuests}</th>

@@ -155,6 +155,7 @@ def compute_account(records, date_from, date_to, today):
     total_nights = open_nights = guests = open_guests = 0
     monthly = defaultdict(int)
     guest_list = []
+    current_guests = []
     for rec in records:
         if not isinstance(rec, dict):
             continue
@@ -163,6 +164,9 @@ def compute_account(records, date_from, date_to, today):
         if ci is None:
             continue
         is_open = co is None
+        # Aktuell angemeldet = offen, Anreise bis heute (auch 0 Nächte)
+        if is_open and ci <= today:
+            current_guests.append({"name": guest_name(rec), "checkin": ci.isoformat()})
         checkout_excl = min(today, range_end_excl) if is_open else min(co, range_end_excl)
         start = max(ci, range_start)
         if checkout_excl <= start:
@@ -185,12 +189,13 @@ def compute_account(records, date_from, date_to, today):
             "open": is_open,
         })
     guest_list.sort(key=lambda g: g["checkin"])
+    current_guests.sort(key=lambda g: g["checkin"])
     monthly_json = {"%04d-%02d" % (y, m): n for (y, m), n in monthly.items()}
     return {
         "total_nights": total_nights, "open_nights": open_nights,
         "guests": guests, "open_guests": open_guests,
         "monthly": monthly_json, "records": len(records),
-        "guest_list": guest_list,
+        "guest_list": guest_list, "current_guests": current_guests,
     }
 
 
@@ -511,6 +516,11 @@ HTML_PAGE = r"""<!doctype html>
   .gtable td,.gtable th{padding:9px 8px}
   .tagopen{display:inline-block;background:rgba(37,99,235,.15);color:var(--accent2);
            border-radius:6px;padding:1px 7px;font-size:12px;font-weight:600}
+  .accblock{margin-bottom:12px}
+  .accname{font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px}
+  .cbadge{background:var(--accent);color:#fff;border-radius:20px;padding:0 9px;font-size:13px;font-weight:700}
+  .curlist{margin:6px 0 0;padding-left:22px}
+  .curlist li{margin:4px 0;font-size:15px}
   .hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:4px}
   .lang{display:flex;gap:4px;flex:none}
   .lang button{padding:7px 11px;border-radius:9px;border:1px solid var(--line);
@@ -568,6 +578,10 @@ HTML_PAGE = r"""<!doctype html>
       </div>
     </div>
     <div class="card">
+      <h2 data-i18n="currentTitle"></h2>
+      <div id="current"></div>
+    </div>
+    <div class="card">
       <h2 data-i18n="perAccount"></h2>
       <table><thead><tr><th data-i18n="thAccount"></th><th style="text-align:right" data-i18n="thNights"></th>
         <th style="text-align:right" data-i18n="thOpen"></th><th style="text-align:right" data-i18n="thGuests"></th></tr></thead>
@@ -599,6 +613,7 @@ var I18N={
      kpiNights:"Übernachtungen gesamt", kpiOpen:"davon offen (nicht abgemeldet)", kpiGuests:"Gäste gesamt",
      perAccount:"Pro Account", thAccount:"Account", thNights:"Übernacht.", thOpen:"davon offen", thGuests:"Gäste",
      total:"GESAMT", perMonth:"Übernachtungen pro Monat", guestsInPeriod:"Angemeldete Gäste im Zeitraum",
+     currentTitle:"Aktuell angemeldete Gäste", since:"seit", noneCurrent:"Aktuell niemand angemeldet.",
      thGuest:"Gast", thArrival:"Anreise", thDeparture:"Abreise", thNightsShort:"Nächte",
      open:"offen", guestsWord:"Gäste", nightsWord:"Nächte",
      noGuests:"Keine Gäste im Zeitraum.", noGuestData:"Keine Gästedaten.",
@@ -627,6 +642,7 @@ var I18N={
      kpiNights:"Ukupno noćenja", kpiOpen:"od toga otvoreno (bez odjave)", kpiGuests:"Ukupno gostiju",
      perAccount:"Po računu", thAccount:"Račun", thNights:"Noćenja", thOpen:"otvoreno", thGuests:"Gosti",
      total:"UKUPNO", perMonth:"Noćenja po mjesecu", guestsInPeriod:"Prijavljeni gosti u razdoblju",
+     currentTitle:"Trenutačno prijavljeni gosti", since:"od", noneCurrent:"Trenutačno nema prijavljenih gostiju.",
      thGuest:"Gost", thArrival:"Dolazak", thDeparture:"Odlazak", thNightsShort:"Noći",
      open:"otvoreno", guestsWord:"gostiju", nightsWord:"noći",
      noGuests:"Nema gostiju u razdoblju.", noGuestData:"Nema podataka o gostima.",
@@ -805,6 +821,21 @@ function render(data){
       '<div class="bartrack"><div class="bar" style="width:'+pct+'%"><span>'+months[k]+'</span></div></div></div>';
   });
   el("bars").innerHTML=bars||'<p class="note">'+t("noMonthData")+'</p>';
+
+  // Aktuell angemeldete (anwesende) Gäste je Account
+  var ch="";
+  data.results.forEach(function(r){
+    if(!r.ok){return;}
+    var list=r.stats.current_guests||[];
+    var items="";
+    list.forEach(function(x){
+      items+='<li>'+esc(x.name)+' <span class="note">('+t("since")+' '+x.checkin+')</span></li>';
+    });
+    ch+='<div class="accblock"><div class="accname">'+esc(r.username)+
+        ' <span class="cbadge">'+list.length+'</span></div>'+
+        (items?'<ul class="curlist">'+items+'</ul>':'<p class="note">'+t("noneCurrent")+'</p>')+'</div>';
+  });
+  el("current").innerHTML=ch||'<p class="note">'+t("noneCurrent")+'</p>';
 
   // Gästeliste pro Account (aufklappbar)
   var gh="";

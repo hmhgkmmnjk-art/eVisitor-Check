@@ -20,6 +20,12 @@ Das Programm kann auf eVisitor **nichts** verändern:
   Skripten und ist mit Tests abgesichert.
 - Zugangsdaten werden **nie** in Dateien geschrieben oder committet.
 
+## Aktuell angemeldete Gäste
+
+Zusätzlich wird pro Account eine Kachel mit den **aktuell angemeldeten**
+(noch nicht abgemeldeten, heute anwesenden) Gästen **namentlich** angezeigt –
+inklusive Anreisedatum. Auch heute erst angereiste Gäste (0 Nächte) erscheinen.
+
 ## Angemeldete Gäste im Zeitraum
 
 Zusätzlich zu Summen und Monats-Diagramm zeigt die Oberfläche pro Account eine
