@@ -52,7 +52,9 @@ const I18N = {
     errLogin: "Login fehlgeschlagen (Benutzername/Passwort falsch).",
     errHttp: "Fehler beim Datenabruf (HTTP {s}).",
     errConn: "Keine Verbindung zum Server.",
+    loading: "Abfrage läuft …",
     running: "Frage ab … Account {i} von {n}",
+    preparing: "Ergebnis wird aufbereitet …",
     result: "Ergebnis", period: "Zeitraum",
     kpiNights: "Übernachtungen gesamt", kpiOpen: "davon offen (nicht abgemeldet)",
     kpiGuests: "Gäste gesamt",
@@ -84,7 +86,9 @@ const I18N = {
     errLogin: "Prijava nije uspjela (pogrešno korisničko ime/lozinka).",
     errHttp: "Greška pri dohvaćanju podataka (HTTP {s}).",
     errConn: "Nema veze s poslužiteljem.",
+    loading: "Dohvaćanje …",
     running: "Dohvaćam … račun {i} od {n}",
+    preparing: "Priprema rezultata …",
     result: "Rezultat", period: "Razdoblje",
     kpiNights: "Ukupno noćenja", kpiOpen: "od toga otvoreno (bez odjave)",
     kpiGuests: "Ukupno gostiju",
@@ -275,7 +279,71 @@ function esc(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function buildReport(results, fromDay, toDay, lang) {
+function reportCSS() {
+  return `<style>
+:root{--bg:#f4f6f9;--card:#fff;--ink:#1c2430;--muted:#6b7685;--accent:#2563eb;
+--accent2:#1d4ed8;--line:#e3e8ef;--total:#eef4ff;--err:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141b;--card:#1a212b;--ink:#e8edf3;
+--muted:#95a1b0;--accent:#3b82f6;--accent2:#60a5fa;--line:#2a333f;--total:#1e2836;--err:#f87171}}
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 -apple-system,sans-serif;
+background:var(--bg);color:var(--ink);padding:16px}
+.wrap{max-width:820px;margin:0 auto}h1{font-size:21px;margin:.2em 0}
+.sub{color:var(--muted);margin-bottom:16px;font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+padding:16px;margin-bottom:14px}h2{font-size:16px;margin:.1em 0 .6em}
+.kpis{display:flex;gap:10px;flex-wrap:wrap}
+.kpi{flex:1;min-width:140px;background:var(--total);border-radius:12px;padding:12px 14px}
+.kpi .n{font-size:28px;font-weight:700;color:var(--accent2)}
+.kpi .l{color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:10px 8px;text-align:left;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
+td.num{text-align:right}td.big{font-weight:700;color:var(--accent2)}
+tr.total td{background:var(--total);font-weight:700;border-top:2px solid var(--accent)}
+tr.err td{color:var(--err)}
+.barrow{display:flex;align-items:center;gap:9px;margin:6px 0}
+.barlabel{width:72px;font-size:12px;color:var(--muted);flex:none;text-align:right}
+.bartrack{flex:1;background:var(--total);border-radius:7px;overflow:hidden;height:24px}
+.bar{background:linear-gradient(90deg,var(--accent),var(--accent2));height:100%;
+min-width:2px;border-radius:7px;display:flex;align-items:center;justify-content:flex-end}
+.bar span{color:#fff;font-size:11px;font-weight:600;padding:0 7px}
+details{border:1px solid var(--line);border-radius:10px;margin-bottom:9px;overflow:hidden}
+summary{padding:11px 13px;cursor:pointer;font-weight:600;background:var(--total);
+list-style:none;display:flex;justify-content:space-between;gap:8px}
+summary::-webkit-details-marker{display:none}
+summary .badge{font-weight:400;color:var(--muted);font-size:12px}
+.tagopen{background:rgba(37,99,235,.15);color:var(--accent2);border-radius:6px;
+padding:1px 6px;font-size:11px;font-weight:600}
+.note{font-size:12px;color:var(--muted)}
+.accblock{margin-bottom:10px}
+.accname{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
+.cbadge{background:var(--accent);color:#fff;border-radius:20px;padding:0 8px;font-size:12px;font-weight:700}
+.curlist{margin:6px 0 0;padding-left:20px}
+.curlist li{margin:3px 0;font-size:14px}
+footer{color:var(--muted);font-size:11px;text-align:center;margin-top:6px}
+.center{min-height:78vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.sp{width:46px;height:46px;border:5px solid rgba(37,99,235,.25);border-top-color:var(--accent);
+border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>`;
+}
+
+function buildLoadingPage(lang) {
+  const T = I18N[lang] || I18N.de;
+  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(T.title)}</title>${reportCSS()}</head><body><div class="wrap">
+<div id="content"><div class="center"><div class="sp"></div>
+<h1 style="margin:18px 0 6px">${esc(T.title)}</h1>
+<p id="status" class="sub">${esc(T.loading)}</p></div></div></div>
+<script>
+function setStatus(t){var e=document.getElementById('status');if(e)e.textContent=t;}
+function showReport(html){var c=document.getElementById('content');if(c)c.innerHTML=html;
+window.scrollTo(0,0);}
+</script></body></html>`;
+}
+
+function reportBody(results, fromDay, toDay, lang) {
   const T = I18N[lang];
   let totN = 0, totO = 0, totG = 0;
   const months = {};
@@ -347,51 +415,7 @@ function buildReport(results, fromDay, toDay, lang) {
   const gen = p(now.getDate()) + "." + p(now.getMonth() + 1) + "." + now.getFullYear() +
               " " + p(now.getHours()) + ":" + p(now.getMinutes());
 
-  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(T.title)}</title><style>
-:root{--bg:#f4f6f9;--card:#fff;--ink:#1c2430;--muted:#6b7685;--accent:#2563eb;
---accent2:#1d4ed8;--line:#e3e8ef;--total:#eef4ff;--err:#c0392b}
-@media (prefers-color-scheme:dark){:root{--bg:#0f141b;--card:#1a212b;--ink:#e8edf3;
---muted:#95a1b0;--accent:#3b82f6;--accent2:#60a5fa;--line:#2a333f;--total:#1e2836;--err:#f87171}}
-*{box-sizing:border-box}body{margin:0;font:16px/1.5 -apple-system,sans-serif;
-background:var(--bg);color:var(--ink);padding:16px}
-.wrap{max-width:820px;margin:0 auto}h1{font-size:21px;margin:.2em 0}
-.sub{color:var(--muted);margin-bottom:16px;font-size:14px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-padding:16px;margin-bottom:14px}h2{font-size:16px;margin:.1em 0 .6em}
-.kpis{display:flex;gap:10px;flex-wrap:wrap}
-.kpi{flex:1;min-width:140px;background:var(--total);border-radius:12px;padding:12px 14px}
-.kpi .n{font-size:28px;font-weight:700;color:var(--accent2)}
-.kpi .l{color:var(--muted);font-size:12px}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{padding:10px 8px;text-align:left;border-bottom:1px solid var(--line)}
-th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase}
-td.num{text-align:right}td.big{font-weight:700;color:var(--accent2)}
-tr.total td{background:var(--total);font-weight:700;border-top:2px solid var(--accent)}
-tr.err td{color:var(--err)}
-.barrow{display:flex;align-items:center;gap:9px;margin:6px 0}
-.barlabel{width:72px;font-size:12px;color:var(--muted);flex:none;text-align:right}
-.bartrack{flex:1;background:var(--total);border-radius:7px;overflow:hidden;height:24px}
-.bar{background:linear-gradient(90deg,var(--accent),var(--accent2));height:100%;
-min-width:2px;border-radius:7px;display:flex;align-items:center;justify-content:flex-end}
-.bar span{color:#fff;font-size:11px;font-weight:600;padding:0 7px}
-details{border:1px solid var(--line);border-radius:10px;margin-bottom:9px;overflow:hidden}
-summary{padding:11px 13px;cursor:pointer;font-weight:600;background:var(--total);
-list-style:none;display:flex;justify-content:space-between;gap:8px}
-summary::-webkit-details-marker{display:none}
-summary .badge{font-weight:400;color:var(--muted);font-size:12px}
-.tagopen{background:rgba(37,99,235,.15);color:var(--accent2);border-radius:6px;
-padding:1px 6px;font-size:11px;font-weight:600}
-.note{font-size:12px;color:var(--muted)}
-.accblock{margin-bottom:10px}
-.accname{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
-.cbadge{background:var(--accent);color:#fff;border-radius:20px;padding:0 8px;font-size:12px;font-weight:700}
-.curlist{margin:6px 0 0;padding-left:20px}
-.curlist li{margin:3px 0;font-size:14px}
-footer{color:var(--muted);font-size:11px;text-align:center;margin-top:6px}
-</style></head><body><div class="wrap">
-<h1>${esc(T.title)}</h1>
+  return `<h1>${esc(T.title)}</h1>
 <div class="sub">${T.period}: ${isoOfDay(fromDay)} ${T.between} ${isoOfDay(toDay)}</div>
 <div class="card"><div class="kpis">
 <div class="kpi"><div class="n">${totN}</div><div class="l">${T.kpiNights}</div></div>
@@ -405,8 +429,16 @@ footer{color:var(--muted);font-size:11px;text-align:center;margin-top:6px}
 </tr></thead><tbody>${rows}</tbody></table></div>
 <div class="card"><h2>${T.perMonth}</h2>${bars}</div>
 <div class="card"><h2>${T.guestsInPeriod}</h2>${gh || '<p class="note">' + T.noGuests + "</p>"}</div>
-<footer>${gen} · ${T.footer}</footer>
-</div></body></html>`;
+<footer>${gen} · ${T.footer}</footer>`;
+}
+
+function buildReport(results, fromDay, toDay, lang) {
+  const T = I18N[lang] || I18N.de;
+  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(T.title)}</title>${reportCSS()}</head><body>` +
+    `<div class="wrap" id="content">${reportBody(results, fromDay, toDay, lang)}</div>` +
+    `</body></html>`;
 }
 
 // ------------------------------- App (UI) ---------------------------------
@@ -532,10 +564,22 @@ async function main() {
     if (!accounts.length) { await msgAlert(T.vAccount, T); continue; }
 
     const todayDay = Math.floor(Date.now() / DAY);
+
+    // Lade-Bildschirm SOFORT anzeigen und offen lassen, bis das Ergebnis da ist.
+    // (present() wird bewusst nicht awaited -> das Skript läuft weiter und
+    //  aktualisiert die Seite per evaluateJavaScript.)
+    const wv = new WebView();
+    await wv.loadHTML(buildLoadingPage(lang));
+    const shown = wv.present(true);
+    const setStatus = async (txt) => {
+      try { await wv.evaluateJavaScript("setStatus(" + JSON.stringify(txt) + ")", false); }
+      catch (e) { /* Anzeige-Update optional */ }
+    };
+
     const results = [];
     for (let i = 0; i < accounts.length; i++) {
       const acc = accounts[i];
-      console.log(T.running.replace("{i}", i + 1).replace("{n}", accounts.length));
+      await setStatus(T.running.replace("{i}", i + 1).replace("{n}", accounts.length));
       try {
         await apiLogin(acc.u, acc.p, T);
         const recs = await fetchRecords(fromDay, toDay, T);
@@ -554,11 +598,16 @@ async function main() {
       }
     }
 
-    const html = buildReport(results, fromDay, toDay, lang);
-    const wv = new WebView();
-    await wv.loadHTML(html);
-    await wv.present(true);
-    return;                                // nach Schließen des Reports beenden
+    await setStatus(T.preparing);
+    const body = reportBody(results, fromDay, toDay, lang);
+    try {
+      await wv.evaluateJavaScript("showReport(" + JSON.stringify(body) + ")", false);
+    } catch (e) {
+      // Fallback: falls In-Place-Aktualisierung scheitert, ganze Seite neu laden
+      try { await wv.loadHTML(buildReport(results, fromDay, toDay, lang)); } catch (e3) {}
+    }
+    await shown;                           // wartet, bis der Report geschlossen wird
+    return;
   }
 }
 
@@ -608,5 +657,5 @@ if (typeof Alert !== "undefined") {
   // Node (nur für Tests der reinen Logik)
   module.exports = { assertReadOnly, parseNetDate, isoOfDay, dayOf,
                      monthsBetween, computeAccount, currentGuestsOf,
-                     buildReport, I18N };
+                     buildReport, reportBody, buildLoadingPage, reportCSS, I18N };
 }
